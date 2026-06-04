@@ -17,6 +17,10 @@
       "dependsOn": ["^build"],
       "outputs": []
     },
+    "next-shop#typecheck": {
+      "dependsOn": ["^build", "build"],
+      "outputs": []
+    },
     "clean": {
       "cache": false
     }

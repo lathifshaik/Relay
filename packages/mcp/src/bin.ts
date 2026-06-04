@@ -14,9 +14,10 @@ const token = parseToken(process.argv.slice(2)) ?? process.env.RELAY_TOKEN;
 const opts: { token?: string } = {};
 if (token !== undefined) opts.token = token;
 
-runServer(opts).catch((err) => {
+runServer(opts).catch((err: unknown) => {
   // MCP servers communicate over stdout via JSON-RPC; log errors to stderr.
-  // eslint-disable-next-line no-console
-  console.error("@relay/mcp fatal:", err instanceof Error ? err.message : err);
+  process.stderr.write(
+    `@relay/mcp fatal: ${err instanceof Error ? err.message : String(err)}\n`,
+  );
   process.exit(1);
 });

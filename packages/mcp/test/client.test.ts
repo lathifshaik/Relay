@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { RelayClient } from "../src/client.js";
 
 function mockFetchOnce(status: number, body: unknown): typeof fetch {
-  return vi.fn(async (input: unknown, init?: unknown) => {
+  return vi.fn(async (_input: unknown, _init?: unknown) => {
     return new Response(JSON.stringify(body), {
       status,
       headers: { "content-type": "application/json" },

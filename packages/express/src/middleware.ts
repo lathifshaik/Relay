@@ -25,7 +25,11 @@ interface RelayLocal {
   captured?: { data: unknown };
 }
 
+// Augment Express's global Request/Response so users get res.relayRespond / req.relay
+// typed in their handlers. @types/express exposes the Express namespace globally.
+// eslint-disable-next-line @typescript-eslint/no-namespace
 declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
       relay?: RelayLocal;
