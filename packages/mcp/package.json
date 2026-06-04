@@ -1,0 +1,44 @@
+{
+  "name": "@relay/mcp",
+  "version": "0.1.0",
+  "description": "Relay MCP server. Exposes relay_manifest / relay_act / relay_validate / relay_state as MCP tools so any MCP-compatible agent (Claude, Cursor, Windsurf) can drive any Relay-enabled app.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "relay-mcp": "./dist/bin.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src test",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist coverage .turbo"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@relay/core": "workspace:*",
+    "@relay/eslint-config": "workspace:*",
+    "@relay/express": "workspace:*",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.0",
+    "eslint": "^9.10.0",
+    "express": "^4.19.2",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

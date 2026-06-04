@@ -1,0 +1,49 @@
+{
+  "name": "@relay/schema",
+  "version": "0.1.0",
+  "description": "Schema primitives shared by @relay/core and adapters. Includes Zod -> IOField bridge.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./zod": {
+      "types": "./dist/zod-bridge.d.ts",
+      "import": "./dist/zod-bridge.js",
+      "require": "./dist/zod-bridge.cjs"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src test",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist coverage .turbo"
+  },
+  "dependencies": {
+    "@relay/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "zod": "^3.23.0"
+  },
+  "peerDependenciesMeta": {
+    "zod": { "optional": true }
+  },
+  "devDependencies": {
+    "@relay/eslint-config": "workspace:*",
+    "@types/node": "^20.14.0",
+    "eslint": "^9.10.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "zod": "^3.23.0"
+  }
+}

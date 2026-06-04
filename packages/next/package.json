@@ -1,0 +1,45 @@
+{
+  "name": "@relay/next",
+  "version": "0.1.0",
+  "description": "Next.js App Router adapter for Relay. defineAction() wraps route handlers; createRelayHandler() serves /relay/*.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src test",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist coverage .turbo"
+  },
+  "dependencies": {
+    "@relay/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "next": "^15.0.0",
+    "react": "^18.3.0 || ^19.0.0"
+  },
+  "devDependencies": {
+    "@relay/eslint-config": "workspace:*",
+    "@types/node": "^20.14.0",
+    "@types/react": "^19.0.0",
+    "eslint": "^9.10.0",
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

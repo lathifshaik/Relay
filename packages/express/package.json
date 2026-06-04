@@ -1,0 +1,46 @@
+{
+  "name": "@relay/express",
+  "version": "0.1.0",
+  "description": "Express adapter for Relay. Wraps your app with the /relay/* endpoints in one line.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src test",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist coverage .turbo"
+  },
+  "dependencies": {
+    "@relay/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "express": "^4.19.0 || ^5.0.0"
+  },
+  "devDependencies": {
+    "@relay/eslint-config": "workspace:*",
+    "@relay/schema": "workspace:*",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.0",
+    "@types/supertest": "^6.0.2",
+    "eslint": "^9.10.0",
+    "express": "^4.19.2",
+    "supertest": "^7.0.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "zod": "^3.23.0"
+  }
+}
