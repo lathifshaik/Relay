@@ -21,6 +21,10 @@
       "dependsOn": ["^build", "build"],
       "outputs": []
     },
+    "@relay/site#typecheck": {
+      "dependsOn": ["^build", "build"],
+      "outputs": []
+    },
     "clean": {
       "cache": false
     }
