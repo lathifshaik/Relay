@@ -8,10 +8,10 @@ import { RelayMark } from "@/components/ui/RelayMark";
 import { cn } from "@/lib/cn";
 
 const NAV_LINKS = [
-  { label: "Problem", href: "#problem" },
-  { label: "How it works", href: "#how" },
-  { label: "Install", href: "#install" },
-  { label: "Docs", href: "https://github.com/lathifshaik/Relay/blob/main/PLAN.md" },
+  { label: "Problem", href: "/#problem" },
+  { label: "How it works", href: "/#how" },
+  { label: "Install", href: "/#install" },
+  { label: "Docs", href: "/docs" },
 ];
 
 export function Navbar() {

@@ -1,10 +1,11 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { ArrowRight, Github, Sparkles } from "lucide-react";
+import { ArrowRight, Github } from "lucide-react";
 import { AnimatedHeadline } from "@/components/ui/AnimatedHeadline";
 import { AuroraBackground } from "@/components/ui/AuroraBackground";
 import { Button } from "@/components/ui/Button";
+import { VersionBadge } from "@/components/ui/VersionBadge";
 
 const reveal = {
   hidden: { opacity: 0, y: 24, filter: "blur(8px)" },
@@ -22,20 +23,19 @@ export function Hero() {
       <div className="grid-bg absolute inset-0 -z-10" />
 
       <div className="mx-auto max-w-6xl px-6">
-        <motion.a
-          href="https://github.com/lathifshaik/Relay"
-          target="_blank"
-          rel="noopener noreferrer"
+        <motion.div
           variants={reveal}
           initial="hidden"
           animate="show"
           custom={0}
-          className="group mx-auto mb-8 inline-flex items-center gap-2 rounded-full border border-[var(--color-border-bright)] bg-[var(--color-bg-glass)] px-4 py-1.5 text-[12.5px] font-medium text-[var(--color-fg-muted)] backdrop-blur-md transition-colors hover:border-[var(--color-accent-dim)] hover:text-[var(--color-fg)]"
+          className="mb-10 flex justify-center"
         >
-          <Sparkles className="h-3.5 w-3.5 text-[var(--color-accent-bright)]" />
-          v0.1 — Auto-MCP for the Node.js ecosystem
-          <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
-        </motion.a>
+          <VersionBadge
+            version="v0.1.0"
+            label="Auto-MCP for Node.js"
+            href="https://github.com/lathifshaik/Relay"
+          />
+        </motion.div>
 
         <motion.div
           variants={reveal}
