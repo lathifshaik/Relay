@@ -1,11 +1,13 @@
 import type { ActionDef, ActionGraph, BlockListConfig, TokenStore } from "@relay/core";
 import {
   RELAY_PROTOCOL_VERSION,
+  RelayUpstreamError,
   createBlockList,
   handleAct,
   handleManifest,
   handleState,
   handleValidate,
+  isSuccessStatus,
 } from "@relay/core";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import { type DiscoveredAction, scanExpressRoutes } from "./route-scanner.js";
@@ -18,7 +20,11 @@ export interface RelayMiddlewareOptions {
   blockList?: BlockListConfig;
   authDisabled?: boolean;
   buildState?: (req: Request) => Promise<Record<string, unknown>> | Record<string, unknown>;
+  /** How long /relay/act waits for a handler to respond. Defaults to 30s. */
+  handlerTimeoutMs?: number;
 }
+
+const DEFAULT_HANDLER_TIMEOUT_MS = 30_000;
 
 interface RelayLocal {
   isAgent: boolean;
@@ -27,7 +33,6 @@ interface RelayLocal {
 
 // Augment Express's global Request/Response so users get res.relayRespond / req.relay
 // typed in their handlers. @types/express exposes the Express namespace globally.
-// eslint-disable-next-line @typescript-eslint/no-namespace
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
@@ -134,7 +139,14 @@ export function middleware(opts: RelayMiddlewareOptions): RequestHandler {
           actionId,
           async (action, validatedInputs) => {
             if (!handler) throw new Error(`No handler for action ${action.actionId}`);
-            return invokeOriginalHandler(handler, req, res, validatedInputs, action.path);
+            return invokeOriginalHandler(
+              handler,
+              req,
+              res,
+              validatedInputs,
+              action.path,
+              opts.handlerTimeoutMs ?? DEFAULT_HANDLER_TIMEOUT_MS,
+            );
           },
         );
         return send(res, result);
@@ -164,6 +176,7 @@ async function invokeOriginalHandler(
   originalRes: Response,
   validatedInputs: Record<string, unknown>,
   routePath: string,
+  timeoutMs: number,
 ): Promise<unknown> {
   const relayLocal: RelayLocal = { isAgent: true };
 
@@ -173,24 +186,40 @@ async function invokeOriginalHandler(
   fakeReq.query = {} as Request["query"];
   fakeReq.relay = relayLocal;
 
-  const fakeRes = createCapturingResponse(originalRes, relayLocal);
+  // Settle when the handler responds, calls next(), or its promise settles —
+  // whichever comes first. Callback-style handlers respond later, so a sync
+  // return alone is not a signal that the handler is done.
+  const status = await new Promise<number>((resolve, reject) => {
+    let settled = false;
+    const finish = (err?: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (err) reject(err);
+      else resolve(fakeRes.statusCode);
+    };
+    const timer = setTimeout(
+      () => finish(new Error(`Relay: handler did not respond within ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+    const fakeRes = createCapturingResponse(originalRes, relayLocal, () => finish());
 
-  await new Promise<void>((resolve, reject) => {
     try {
-      const ret: unknown = handler(fakeReq, fakeRes, (err?: unknown) => {
-        if (err) reject(err);
-        else resolve();
-      });
+      const ret: unknown = handler(fakeReq, fakeRes, (err?: unknown) => finish(err));
       if (isPromiseLike(ret)) {
-        (ret as Promise<unknown>).then(() => resolve(), reject);
+        (ret as Promise<unknown>).then(
+          () => {
+            if (relayLocal.captured) finish();
+          },
+          (err: unknown) => finish(err ?? new Error("Handler rejected")),
+        );
       }
-      // If handler is sync and called relayRespond, resolve next tick.
-      queueMicrotask(() => resolve());
     } catch (err) {
-      reject(err);
+      finish(err);
     }
   });
 
+  if (!isSuccessStatus(status)) throw new RelayUpstreamError(status);
   return relayLocal.captured?.data;
 }
 
@@ -217,25 +246,41 @@ function extractPathParams(
   return params;
 }
 
-function createCapturingResponse(originalRes: Response, relayLocal: RelayLocal): Response {
+interface CapturingResponse extends Response {
+  statusCode: number;
+}
+
+function createCapturingResponse(
+  originalRes: Response,
+  relayLocal: RelayLocal,
+  onRespond: () => void,
+): CapturingResponse {
   // The capturing response is a synthetic stand-in passed only to user handlers
   // during /relay/act invocation. Express's Response shape is huge — overriding
   // every method with type-perfect signatures bloats the code for no gain.
   // Cast through `unknown` once at the boundary.
   const fake = Object.create(originalRes) as Record<string, unknown>;
-  fake["status"] = (_code: number) => fake;
-  fake["json"] = (data: unknown) => {
+  const capture = (data: unknown) => {
     relayLocal.captured = { data };
+    onRespond();
     return fake;
   };
-  fake["send"] = (data: unknown) => {
-    relayLocal.captured = { data };
+  fake["statusCode"] = 200;
+  fake["status"] = (code: number) => {
+    fake["statusCode"] = code;
     return fake;
   };
-  fake["relayRespond"] = (data: unknown) => {
-    relayLocal.captured = { data };
-    return fake;
+  fake["sendStatus"] = (code: number) => {
+    fake["statusCode"] = code;
+    return capture(undefined);
   };
+  fake["json"] = capture;
+  fake["send"] = capture;
+  fake["end"] = (data?: unknown) => capture(typeof data === "function" ? undefined : data);
+  fake["relayRespond"] = capture;
   fake["setHeader"] = () => fake;
-  return fake as unknown as Response;
+  fake["set"] = () => fake;
+  fake["header"] = () => fake;
+  fake["type"] = () => fake;
+  return fake as unknown as CapturingResponse;
 }

@@ -34,3 +34,11 @@ describe("explicit allow override", () => {
     expect(isBlocked("/admin/secret", blockList)).toBe(true);
   });
 });
+
+describe("stateful regexes", () => {
+  it("blocks consistently when a custom pattern has the global flag", () => {
+    const blockList = createBlockList([/\/reports/g]);
+    expect(isBlocked("/reports", blockList)).toBe(true);
+    expect(isBlocked("/reports", blockList)).toBe(true);
+  });
+});

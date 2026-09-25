@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { MemoryTokenStore, hasScope, issueToken, verifyToken } from "../src/token.js";
 
@@ -77,6 +78,25 @@ describe("verifyToken — failure modes", () => {
     ).toString("base64url");
     const r = await verifyToken(`${fakeHeader}.${fakePayload}.sig`, KEY);
     expect(r.ok).toBe(false);
+  });
+});
+
+describe("verifyToken — hardening", () => {
+  it("rejects every token when the signing key is empty", async () => {
+    const token = issueToken({ subject: "a", scope: ["*"], signingKey: "k" });
+    const r = await verifyToken(token, "");
+    expect(r.ok).toBe(false);
+  });
+
+  it("rejects a token whose scope holds non-strings", async () => {
+    const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+    const now = Math.floor(Date.now() / 1000);
+    const payload = Buffer.from(
+      JSON.stringify({ sub: "a", scope: [{}], iat: now, exp: now + 60, jti: "j" }),
+    ).toString("base64url");
+    const sig = createHmac("sha256", "k").update(`${header}.${payload}`).digest("base64url");
+    const r = await verifyToken(`${header}.${payload}.${sig}`, "k");
+    expect(r).toEqual({ ok: false, reason: "malformed" });
   });
 });
 

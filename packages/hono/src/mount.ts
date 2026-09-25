@@ -6,13 +6,18 @@ import type {
 } from "@relay/core";
 import {
   RELAY_PROTOCOL_VERSION,
+  RelayUpstreamError,
+  buildRouteUrl,
   createBlockList,
   handleAct,
   handleManifest,
   handleState,
   handleValidate,
+  isSuccessStatus,
+  methodHasBody,
 } from "@relay/core";
 import type { Context, Hono } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { type DiscoveredAction, scanHonoRoutes } from "./route-scanner.js";
 
 export interface RelayHonoOptions {
@@ -107,8 +112,8 @@ export function mountRelay(app: Hono, opts: RelayHonoOptions): Hono {
   return app;
 }
 
-function statusOf(result: { status: number }): 200 | 400 | 401 | 403 | 404 | 500 {
-  return result.status as 200 | 400 | 401 | 403 | 404 | 500;
+function statusOf(result: { status: number }): ContentfulStatusCode {
+  return result.status as ContentfulStatusCode;
 }
 
 function extractToken(c: Context): string | undefined {
@@ -133,20 +138,17 @@ async function invokeViaFetch(
   method: string,
   validatedInputs: Record<string, unknown>,
 ): Promise<unknown> {
-  const url = new URL(originalCtx.req.url);
-  url.pathname = substitutePathParams(routePath, validatedInputs);
-  url.search = "";
+  const url = new URL(buildRouteUrl(routePath, method, validatedInputs), originalCtx.req.url);
 
-  const init: RequestInit = {
-    method,
-    headers: { "content-type": "application/json" },
-  };
-  if (methodAllowsBody(method)) {
+  const init: RequestInit = { method };
+  if (methodHasBody(method)) {
+    init.headers = { "content-type": "application/json" };
     init.body = JSON.stringify(validatedInputs);
   }
   const request = new Request(url.toString(), init);
 
   const response = await app.fetch(request);
+  if (!isSuccessStatus(response.status)) throw new RelayUpstreamError(response.status);
   const text = await response.text();
   if (!text) return undefined;
   try {
@@ -154,20 +156,4 @@ async function invokeViaFetch(
   } catch {
     return text;
   }
-}
-
-function methodAllowsBody(method: string): boolean {
-  return method !== "GET" && method !== "HEAD" && method !== "DELETE";
-}
-
-function substitutePathParams(
-  routePath: string,
-  inputs: Record<string, unknown>,
-): string {
-  return routePath.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, (_match, name: string) => {
-    const value = inputs[name];
-    if (typeof value === "string") return encodeURIComponent(value);
-    if (typeof value === "number") return String(value);
-    return _match;
-  });
 }

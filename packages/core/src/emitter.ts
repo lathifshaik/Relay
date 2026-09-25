@@ -5,6 +5,7 @@ import { projectOutput } from "./projection.js";
 import { sanitiseError } from "./sanitiser.js";
 import type { TokenClaims, TokenStore } from "./token.js";
 import { hasScope, verifyToken } from "./token.js";
+import { RelayUpstreamError } from "./upstream-error.js";
 import { validateInput } from "./validator.js";
 
 export interface EmitterContext {
@@ -115,6 +116,7 @@ export async function handleAct(
   try {
     captured = await invoke(action, validation.value);
   } catch (err) {
+    if (err instanceof RelayUpstreamError) return upstreamFailure(actionId, err.status);
     return { status: 500, body: sanitiseError(err) };
   }
 
@@ -138,6 +140,13 @@ function findActionInGraph(graph: ActionGraph, actionId: string): ActionDef | un
 
 function notFound(actionId: string): RelayResponse {
   return { status: 404, body: { error: "RELAY_ACTION_NOT_FOUND", actionId } };
+}
+
+function upstreamFailure(actionId: string, upstreamStatus: number): RelayResponse {
+  // 4xx is the agent's to fix (wrong id, conflict, ...), so keep it. 5xx and
+  // anything unexpected becomes a gateway error so it is not mistaken for Relay's own.
+  const status = upstreamStatus >= 400 && upstreamStatus < 500 ? upstreamStatus : 502;
+  return { status, body: { error: "RELAY_UPSTREAM_ERROR", actionId, upstreamStatus } };
 }
 
 function outOfScope(actionId: string): RelayResponse {

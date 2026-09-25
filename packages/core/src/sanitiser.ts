@@ -9,7 +9,10 @@ export const DEFAULT_SECRET_PATTERNS: readonly SecretPattern[] = [
   { name: "aws-access-key", regex: /\bAKIA[0-9A-Z]{16}\b/g },
   { name: "stripe-live", regex: /\b(?:sk|pk|rk)_live_[A-Za-z0-9]{20,}\b/g },
   { name: "stripe-test", regex: /\b(?:sk|pk|rk)_test_[A-Za-z0-9]{20,}\b/g },
-  { name: "github-token", regex: /\bghp_[A-Za-z0-9]{36}\b/g },
+  { name: "github-token", regex: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/g },
+  { name: "github-fine-grained-pat", regex: /\bgithub_pat_[A-Za-z0-9_]{22,}\b/g },
+  { name: "slack-token", regex: /\bxox[abposr]-[A-Za-z0-9-]{10,}\b/g },
+  { name: "google-api-key", regex: /\bAIza[0-9A-Za-z_-]{35}\b/g },
   { name: "jwt", regex: /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g },
   {
     name: "pem-block",

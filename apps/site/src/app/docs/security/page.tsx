@@ -43,7 +43,10 @@ sk-ant-[A-Za-z0-9_-]{20,}                    // Anthropic keys
 AKIA[0-9A-Z]{16}                             // AWS access keys
 (sk|pk|rk)_live_[A-Za-z0-9]{20,}             // Stripe live
 (sk|pk|rk)_test_[A-Za-z0-9]{20,}             // Stripe test
-ghp_[A-Za-z0-9]{36}                          // GitHub tokens
+gh[pousr]_[A-Za-z0-9]{36,}                   // GitHub tokens
+github_pat_[A-Za-z0-9_]{22,}                 // GitHub fine-grained PATs
+xox[abposr]-[A-Za-z0-9-]{10,}                // Slack tokens
+AIza[0-9A-Za-z_-]{35}                        // Google API keys
 eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+   // JWTs
 -----BEGIN [A-Z ]+-----[\\s\\S]+?-----END [A-Z ]+----- // PEM blocks
 (postgres|mysql|mongodb|redis):\\/\\/...      // Connection strings
@@ -74,7 +77,10 @@ export default function SecurityDocs() {
         <LI>
           <strong>Schema projection</strong> — only fields declared in the action's{" "}
           <InlineCode>returns</InlineCode> map are forwarded. A handler returning a
-          40-field DB row with a 3-field schema yields only those 3 fields.
+          40-field DB row with a 3-field schema yields only those 3 fields. Projection
+          recurses into objects with <InlineCode>properties</InlineCode> and arrays with{" "}
+          <InlineCode>items</InlineCode>, so a nested <InlineCode>user.passwordHash</InlineCode>{" "}
+          is dropped too.
         </LI>
         <LI>
           <strong>Secret pattern scanner</strong> — every string is scanned against known

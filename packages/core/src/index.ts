@@ -21,6 +21,10 @@ export {
 
 export { projectOutput } from "./projection.js";
 
+export { RelayUpstreamError, isSuccessStatus } from "./upstream-error.js";
+
+export { buildRouteUrl, methodHasBody } from "./route-url.js";
+
 export type { BlockListConfig } from "./block-list.js";
 export { DEFAULT_BLOCKED_PATTERNS, createBlockList, isBlocked } from "./block-list.js";
 

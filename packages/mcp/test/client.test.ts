@@ -42,6 +42,19 @@ describe("RelayClient.getManifest", () => {
   });
 });
 
+describe("RelayClient timeout", () => {
+  it("aborts a request that outlives timeoutMs", async () => {
+    const fetchImpl: typeof fetch = vi.fn(
+      (_input: unknown, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        }),
+    ) as unknown as typeof fetch;
+    const client = new RelayClient({ fetchImpl, timeoutMs: 20 });
+    await expect(client.getManifest("http://localhost:3000")).rejects.toThrow();
+  });
+});
+
 describe("RelayClient.act", () => {
   it("POSTs /relay/act/:actionId with inputs wrapper", async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];

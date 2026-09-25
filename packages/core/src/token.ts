@@ -61,6 +61,8 @@ export async function verifyToken(
   signingKey: string,
   store?: TokenStore,
 ): Promise<VerifyResult> {
+  // An empty key would let anyone mint a valid HMAC; refuse rather than accept.
+  if (!signingKey) return { ok: false, reason: "bad-signature" };
   const parts = token.split(".");
   if (parts.length !== 3) return { ok: false, reason: "malformed" };
   const [header, payload, sig] = parts as [string, string, string];
@@ -80,6 +82,7 @@ export async function verifyToken(
   if (
     typeof claims.sub !== "string" ||
     !Array.isArray(claims.scope) ||
+    !claims.scope.every((s) => typeof s === "string") ||
     typeof claims.iat !== "number" ||
     typeof claims.exp !== "number" ||
     typeof claims.jti !== "string"

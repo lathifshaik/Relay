@@ -23,6 +23,13 @@ describe("sanitiseString — secret patterns", () => {
     expect(sanitiseString("pk_test_abcdefghijklmnopqrstuv")).toBe("[REDACTED]");
   });
 
+  it("redacts GitHub, Slack and Google API tokens", () => {
+    expect(sanitiseString(`gho_${"a".repeat(36)}`)).toBe("[REDACTED]");
+    expect(sanitiseString(`github_pat_${"A1_".repeat(10)}`)).toBe("[REDACTED]");
+    expect(sanitiseString("xoxb-1234567890-abcdefghij")).toBe("[REDACTED]");
+    expect(sanitiseString(`AIza${"B".repeat(35)}`)).toBe("[REDACTED]");
+  });
+
   it("redacts JWTs", () => {
     const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.abc-def_ghi";
     expect(sanitiseString(`token=${jwt}`)).toBe("token=[REDACTED]");

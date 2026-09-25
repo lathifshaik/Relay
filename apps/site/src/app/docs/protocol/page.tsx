@@ -134,6 +134,12 @@ export default function ProtocolDocs() {
         Inputs may also be passed at the top level (without the{" "}
         <InlineCode>inputs</InlineCode> wrapper). Both shapes are accepted.
       </P>
+      <P>
+        If the original route answers with a non-2xx status, Relay returns{" "}
+        <InlineCode>&lbrace; error: "RELAY_UPSTREAM_ERROR", actionId, upstreamStatus &rbrace;</InlineCode>.
+        A 4xx status is passed through; a 5xx becomes 502. The route's own error body is
+        never forwarded.
+      </P>
 
       <H3 id="validate">POST /relay/validate</H3>
       <P>

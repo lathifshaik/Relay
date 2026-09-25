@@ -29,4 +29,33 @@ describe("projectOutput", () => {
     expect(projectOutput(orderSchema, null)).toEqual({});
     expect(projectOutput(orderSchema, "string")).toEqual({});
   });
+
+  it("strips undeclared fields inside nested objects", () => {
+    const result = projectOutput(
+      { user: { type: "object", properties: { id: { type: "string" } } } },
+      { user: { id: "u_1", passwordHash: "hunter2" } },
+    );
+    expect(result).toEqual({ user: { id: "u_1" } });
+  });
+
+  it("strips undeclared fields inside array items", () => {
+    const result = projectOutput(
+      {
+        users: {
+          type: "array",
+          items: { type: "object", properties: { id: { type: "string" } } },
+        },
+      },
+      { users: [{ id: "u_1", email: "a@b.c" }, { id: "u_2", email: "d@e.f" }] },
+    );
+    expect(result).toEqual({ users: [{ id: "u_1" }, { id: "u_2" }] });
+  });
+
+  it("passes nested values through when the schema does not describe them", () => {
+    const result = projectOutput(
+      { meta: { type: "object" } },
+      { meta: { anything: 1 } },
+    );
+    expect(result).toEqual({ meta: { anything: 1 } });
+  });
 });

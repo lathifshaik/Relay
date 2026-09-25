@@ -218,3 +218,36 @@ describe("Non-relay routes pass through", () => {
     expect(r.body).toEqual({ todos: [] });
   });
 });
+
+describe("POST /relay/act — replaying the route", () => {
+  it("passes GET inputs through the query string", async () => {
+    const app = new Hono();
+    app.get(
+      "/search",
+      relayDescribe((c) => c.json({ q: c.req.query("q") ?? null }), {
+        actionId: "search",
+        inputs: { q: { type: "string", required: true } },
+        returns: { q: { type: "string" } },
+      }),
+    );
+    mountRelay(app, { appName: "hono-search" });
+    const r = await fetchJson(app, "/relay/act/search", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ inputs: { q: "red shoes" } }),
+    });
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ q: "red shoes" });
+  });
+
+  it("surfaces a 404 from the route instead of an empty 200", async () => {
+    const { app } = buildTodoApp();
+    const r = await fetchJson(app, "/relay/act/update_todo", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ inputs: { id: "does-not-exist", done: true } }),
+    });
+    expect(r.status).toBe(404);
+    expect(r.body).toMatchObject({ error: "RELAY_UPSTREAM_ERROR", upstreamStatus: 404 });
+  });
+});

@@ -26,6 +26,13 @@ export function createBlockList(
 }
 
 export function isBlocked(path: string, config: BlockListConfig): boolean {
-  if (config.allowed.some((re) => re.test(path))) return false;
-  return config.blocked.some((re) => re.test(path));
+  if (config.allowed.some((re) => matches(re, path))) return false;
+  return config.blocked.some((re) => matches(re, path));
+}
+
+// A user-supplied /g or /y regex keeps lastIndex between test() calls, which
+// would make every other check against the same path silently pass.
+function matches(re: RegExp, path: string): boolean {
+  re.lastIndex = 0;
+  return re.test(path);
 }

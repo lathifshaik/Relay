@@ -6,11 +6,15 @@ import type {
 } from "@relay/core";
 import {
   RELAY_PROTOCOL_VERSION,
+  RelayUpstreamError,
+  buildRouteUrl,
   createBlockList,
   handleAct,
   handleManifest,
   handleState,
   handleValidate,
+  isSuccessStatus,
+  methodHasBody,
 } from "@relay/core";
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { FastifyRouteCollector } from "./route-scanner.js";
@@ -126,32 +130,23 @@ async function invokeViaInject(
   const found = collector.actions.find((d) => d.action.actionId === actionId);
   if (!found) throw new Error(`No route for action ${actionId}`);
 
-  const url = substitutePathParams(found.routePath, validatedInputs);
   const method = found.action.method;
+  const url = buildRouteUrl(found.routePath, method, validatedInputs);
 
   const injected = await fastify.inject({
     method,
     url,
-    payload: validatedInputs,
-    headers: { "content-type": "application/json" },
+    ...(methodHasBody(method) && {
+      payload: validatedInputs,
+      headers: { "content-type": "application/json" },
+    }),
   });
 
+  if (!isSuccessStatus(injected.statusCode)) throw new RelayUpstreamError(injected.statusCode);
   if (!injected.body || injected.body.length === 0) return undefined;
   try {
     return JSON.parse(injected.body);
   } catch {
     return injected.body;
   }
-}
-
-function substitutePathParams(
-  routePath: string,
-  inputs: Record<string, unknown>,
-): string {
-  return routePath.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, (_match, name: string) => {
-    const value = inputs[name];
-    if (typeof value === "string") return encodeURIComponent(value);
-    if (typeof value === "number") return String(value);
-    return _match;
-  });
 }

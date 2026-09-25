@@ -5,6 +5,7 @@ import { createBlockList } from "../src/block-list.js";
 import type { EmitterContext } from "../src/emitter.js";
 import { handleAct, handleManifest, handleState, handleValidate } from "../src/emitter.js";
 import { issueToken } from "../src/token.js";
+import { RelayUpstreamError } from "../src/upstream-error.js";
 
 const KEY = "test-signing-key-32-bytes-or-longer-for-hs256";
 
@@ -154,6 +155,36 @@ describe("handleAct — failure modes", () => {
     expect(r.status).toBe(500);
     expect((r.body as { error: string }).error).toBe("INTERNAL_ERROR");
     expect(JSON.stringify(r.body)).not.toContain("postgres://");
+  });
+
+  it("keeps a 4xx status from the upstream handler", async () => {
+    const r = await handleAct(
+      baseCtx(),
+      { body: { inputs: { item_id: "i", quantity: 1 } } },
+      "create_order",
+      () => {
+        throw new RelayUpstreamError(404);
+      },
+    );
+    expect(r.status).toBe(404);
+    expect(r.body).toEqual({
+      error: "RELAY_UPSTREAM_ERROR",
+      actionId: "create_order",
+      upstreamStatus: 404,
+    });
+  });
+
+  it("maps an upstream 5xx to 502", async () => {
+    const r = await handleAct(
+      baseCtx(),
+      { body: { inputs: { item_id: "i", quantity: 1 } } },
+      "create_order",
+      () => {
+        throw new RelayUpstreamError(503);
+      },
+    );
+    expect(r.status).toBe(502);
+    expect((r.body as { upstreamStatus: number }).upstreamStatus).toBe(503);
   });
 });
 

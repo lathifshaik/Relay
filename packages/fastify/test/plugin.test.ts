@@ -1,5 +1,5 @@
 import { describe as relayDescribe, issueToken } from "@relay/core";
-import Fastify from "fastify";
+import Fastify, { type FastifyRequest } from "fastify";
 import { beforeEach, describe, expect, it } from "vitest";
 import { relayPlugin } from "../src/index.js";
 
@@ -230,5 +230,49 @@ describe("Non-relay routes pass through", () => {
     expect(r.statusCode).toBe(200);
     expect(JSON.parse(r.body)).toEqual({ todos: [] });
     await app.close();
+  });
+});
+
+describe("POST /relay/act — replaying the route", () => {
+  async function buildSearchApp() {
+    const app = Fastify({ logger: false });
+    await app.register(relayPlugin, { appName: "fastify-search" });
+    app.get(
+      "/search",
+      relayDescribe(
+        async (req: FastifyRequest<{ Querystring: { q?: string } }>, reply) =>
+          reply.send({ q: req.query.q ?? null }),
+        {
+          actionId: "search",
+          inputs: { q: { type: "string", required: true } },
+          returns: { q: { type: "string" } },
+        },
+      ),
+    );
+    await app.ready();
+    return app;
+  }
+
+  it("passes GET inputs through the query string", async () => {
+    const app = await buildSearchApp();
+    const r = await app.inject({
+      method: "POST",
+      url: "/relay/act/search",
+      payload: { inputs: { q: "red shoes" } },
+    });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ q: "red shoes" });
+  });
+
+  it("surfaces a 404 from the route instead of an empty 200", async () => {
+    const { app } = await buildTodoApp();
+    await app.ready();
+    const r = await app.inject({
+      method: "POST",
+      url: "/relay/act/update_todo",
+      payload: { inputs: { id: "does-not-exist", done: true } },
+    });
+    expect(r.statusCode).toBe(404);
+    expect(r.json()).toMatchObject({ error: "RELAY_UPSTREAM_ERROR", upstreamStatus: 404 });
   });
 });

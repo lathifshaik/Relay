@@ -249,3 +249,77 @@ describe("Non-relay paths pass through untouched", () => {
     expect(r.body).toEqual({ todos: [] });
   });
 });
+
+describe("POST /relay/act/:actionId — handler completion", () => {
+  function buildApp(handlerTimeoutMs?: number) {
+    const app = express();
+    app.use(express.json());
+    app.use(
+      middleware({
+        appName: "completion-test",
+        ...(handlerTimeoutMs !== undefined && { handlerTimeoutMs }),
+      }),
+    );
+    const returns = { ok: { type: "boolean" as const } };
+    app.get(
+      "/async",
+      describeRelay(
+        async (_req: Request, res: Response) => {
+          await new Promise((r) => setTimeout(r, 10));
+          res.json({ ok: true });
+        },
+        { actionId: "async_handler", returns },
+      ),
+    );
+    app.get(
+      "/callback",
+      describeRelay(
+        (_req: Request, res: Response) => {
+          setTimeout(() => res.json({ ok: true }), 10);
+        },
+        { actionId: "callback_handler", returns },
+      ),
+    );
+    app.get(
+      "/missing",
+      describeRelay(
+        (_req: Request, res: Response) => {
+          res.status(404).json({ error: "not found", internal: "row 42" });
+        },
+        { actionId: "missing_handler", returns },
+      ),
+    );
+    app.get(
+      "/silent",
+      describeRelay(() => {}, { actionId: "silent_handler", returns }),
+    );
+    return app;
+  }
+
+  it("waits for an async handler to respond", async () => {
+    const r = await request(buildApp()).post("/relay/act/async_handler").send({});
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ ok: true });
+  });
+
+  it("waits for a callback-style handler to respond", async () => {
+    const r = await request(buildApp()).post("/relay/act/callback_handler").send({});
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ ok: true });
+  });
+
+  it("surfaces a non-2xx handler status without leaking its body", async () => {
+    const r = await request(buildApp()).post("/relay/act/missing_handler").send({});
+    expect(r.status).toBe(404);
+    expect(r.body).toEqual({
+      error: "RELAY_UPSTREAM_ERROR",
+      actionId: "missing_handler",
+      upstreamStatus: 404,
+    });
+  });
+
+  it("fails with 500 when a handler never responds", async () => {
+    const r = await request(buildApp(20)).post("/relay/act/silent_handler").send({});
+    expect(r.status).toBe(500);
+  });
+});
