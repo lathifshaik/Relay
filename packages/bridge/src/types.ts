@@ -1,10 +1,12 @@
-import type { ActionDef, ActionGraph } from "@relay/core";
+import type { ActionDef, ActionGraph, HttpMethod } from "@relay/core";
 
 /** An action replayed as an HTTP call the app's own pages were seen making. */
 export interface ApiTarget {
   kind: "api";
   /** Absolute URL; path segments that looked like ids are `:placeholders`. */
   urlTemplate: string;
+  /** HTTP method to call with when it differs from the action's own (e.g. Relay's POST /relay/act). */
+  callMethod?: HttpMethod;
 }
 
 export type FormFieldKind = "text" | "checkbox" | "radio" | "select";
