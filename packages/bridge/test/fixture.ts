@@ -12,14 +12,30 @@ export async function startFixtureApp(): Promise<{ baseUrl: string; state: Fixtu
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
 
+  // Every page shares the same header and footer, like a real site.
+  const layout = (title: string, body: string, head = "") =>
+    `<!doctype html><html><head><title>${title}</title>${head}</head><body>
+      <header><nav><a href="/">Home</a> <a href="/orders">Orders</a> <a href="/contact">Contact</a>
+      <a href="/logout">Log out</a> <a href="/admin">Admin</a></nav><p>Signed in as Ada</p></header>
+      <main>${body}</main>
+      <footer><p>© 2026 Shop Inc. All rights reserved.</p><p>Terms · Privacy · Help</p></footer></body></html>`;
+
   const authed = (req: express.Request) => (req.headers.cookie ?? "").includes("sid=abc");
 
   app.get("/", (_req, res) => {
-    res.type("html").send(`<!doctype html><html><head><title>Shop</title>
-      <script src="/static/app.js"></script></head>
-      <body><main><h1>Welcome to Shop</h1>
-      <a href="/contact">Contact</a> <a href="/logout">Log out</a> <a href="/admin">Admin</a>
-      <script>fetch("/api/profile")</script></main></body></html>`);
+    res
+      .type("html")
+      .send(
+        layout(
+          "Shop",
+          '<h1>Welcome to Shop</h1><script>fetch("/api/profile")</script>',
+          '<script src="/static/app.js"></script>',
+        ),
+      );
+  });
+  app.get("/orders", (_req, res) => {
+    const rows = state.orders.map((o) => `<li>${o.title} × ${o.qty}</li>`).join("");
+    res.type("html").send(layout("Orders", `<h1>Your orders</h1><ul>${rows}</ul>`));
   });
   app.get("/static/app.js", (_req, res) => {
     res.type("js").send(
@@ -29,18 +45,23 @@ export async function startFixtureApp(): Promise<{ baseUrl: string; state: Fixtu
     );
   });
   app.get("/contact", (_req, res) => {
-    res.type("html").send(`<html><body><section><h2>Contact us</h2>
-      <form method="post" action="/contact">
-        <input type="hidden" name="csrf" value="tok123">
-        <label for="m">Message</label><input id="m" name="message" required>
-        <select name="topic"><option value="sales">Sales</option><option value="help">Help</option></select>
-        <button type="submit">Send</button>
-      </form></section></body></html>`);
+    res.type("html").send(
+      layout(
+        "Contact",
+        `<section><h2>Contact us</h2>
+        <form method="post" action="/contact">
+          <input type="hidden" name="csrf" value="tok123">
+          <label for="m">Message</label><input id="m" name="message" required>
+          <select name="topic"><option value="sales">Sales</option><option value="help">Help</option></select>
+          <button type="submit">Send</button>
+        </form></section>`,
+      ),
+    );
   });
   app.post("/contact", (req, res) => {
     if (req.body.csrf !== "tok123") return res.status(403).send("bad csrf");
     state.messages.push({ message: req.body.message, topic: req.body.topic });
-    res.type("html").send("<html><body><p>Thanks, we got your message.</p></body></html>");
+    res.type("html").send(layout("Sent", "<p>Thanks, we got your message.</p>"));
   });
   app.get("/logout", (_req, res) => {
     state.loggedOut = true;

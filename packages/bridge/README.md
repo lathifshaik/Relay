@@ -14,6 +14,23 @@ The bridge works out what the app can do from the best source it can find:
 
 Each action becomes an MCP tool with a typed input schema. A `read_page` tool returns any page of the site as plain text. The AI works through structured calls and never needs screenshots.
 
+## Saving tokens
+
+The bridge avoids sending the AI the same thing twice:
+
+- **It learns the site's layout.** Navigation, headers and footers that repeat across different kinds of page are learned while the site is scanned and left out of `read_page` results. The reply says how many lines were hidden. Lines are compared per route template, so a line repeated across `/orders/1` and `/orders/2` is never mistaken for layout.
+- **Repeat reads send only changes.** Reading the same page or GET endpoint again returns `{"unchanged": true}` or a short list of changes, e.g. `{"path": "orders[id=2].qty", "from": 1, "to": 3}`. Pass `_full: true` to get everything. Writes always return the full reply.
+- **The site map is saved.** Actions and learned layout are kept in `~/.relay-bridge/<host>.json` (readable only by you) and reused for 24 hours, so a restart doesn't rescan the site.
+- **Replies are compact JSON.**
+
+Every request is logged to stderr and sent to the MCP client as a log message:
+
+```
+read /orders → 200 · 949 B in → 514 B out (46% smaller) · 5 layout lines hidden
+read /orders → 200 · 949 B in → 40 B out (96% smaller) · 5 layout lines hidden, unchanged since last read
+get_api_orders → 200 · 903 B in → 117 B out (87% smaller) · 1 change since last read
+```
+
 ## Using it with Claude
 
 ```json
@@ -46,6 +63,9 @@ The bridge does not log in with a password itself.
 | `--graph <file>` | Serve actions from a saved file instead of discovering again |
 | `--read-only` | Only expose GET actions |
 | `--max-pages <n>` | Pages to read when scanning the frontend (default 15) |
+| `--refresh` | Rescan the site even if its saved map is recent |
+| `--no-cache` | Don't read or write the saved map |
+| `--cache-dir <dir>` | Where site maps are kept (default `~/.relay-bridge`) |
 
 ## Safety
 

@@ -168,6 +168,20 @@ function parseForm(
   };
 }
 
+/**
+ * A page as lines of text: its readable text, then one `text → path` line per
+ * link. Lines are what layout learning and change tracking work on.
+ */
+export function pageLines(page: HtmlPage, pageUrl: string): string[] {
+  const origin = new URL(pageUrl).origin;
+  const links = page.links.slice(0, 80).map((l) => {
+    const url = new URL(l.href);
+    const where = url.origin === origin ? `${url.pathname}${url.search}` : l.href;
+    return `[${l.text || "link"}] → ${where}`;
+  });
+  return [...(page.text ? page.text.split("\n") : []), ...links];
+}
+
 /** Plain text of an HTML document, for handing to an agent. */
 export function htmlToText(html: string): string {
   return readableText(parse(html, { comment: false }));

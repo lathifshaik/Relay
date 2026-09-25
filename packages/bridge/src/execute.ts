@@ -7,6 +7,10 @@ import type { BridgeAction, FormTarget } from "./types.js";
 export interface ActionResult {
   status: number;
   body: unknown;
+  /** Bytes the app sent, before anything was trimmed. */
+  bytes: number;
+  /** The reply was an HTML page; `body` is `{ url, text }`. */
+  html: boolean;
 }
 
 const MAX_TEXT_CHARS = 20_000;
@@ -20,23 +24,21 @@ export async function runAction(
     action.target.kind === "api"
       ? await callApi(session, action.target.urlTemplate, action.target.callMethod ?? action.method, inputs)
       : await submitForm(session, action.target, action.method, inputs);
-  return { status: res.status, body: sanitiseValue(readBody(res)) };
+  return toResult(res);
 }
 
-/** GETs a page of the app and returns it as text, with its links. */
-export async function readPage(session: Session, url: string): Promise<ActionResult> {
-  const res = await session.request(url);
-  if (!res.contentType.includes("html")) return { status: res.status, body: sanitiseValue(readBody(res)) };
-  const page = parseHtml(res.text, res.url);
+export function toResult(res: SessionResponse): ActionResult {
   return {
     status: res.status,
-    body: sanitiseValue({
-      url: res.url,
-      title: page.title,
-      text: page.text,
-      links: page.links.slice(0, 60).map((l) => ({ text: l.text, url: l.href })),
-    }),
+    body: sanitiseValue(readBody(res)),
+    bytes: Buffer.byteLength(res.text),
+    html: res.contentType.includes("html"),
   };
+}
+
+/** The HTTP method an action is actually sent with. */
+export function callMethodOf(action: BridgeAction): string {
+  return action.target.kind === "api" ? (action.target.callMethod ?? action.method) : action.method;
 }
 
 async function callApi(

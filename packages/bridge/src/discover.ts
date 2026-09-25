@@ -1,7 +1,8 @@
 import type { ActionGraph, BlockListConfig, IOField } from "@relay/core";
 import { RELAY_PROTOCOL_VERSION, isBlocked } from "@relay/core";
-import { type HtmlForm, parseHtml } from "./html.js";
+import { type HtmlForm, pageLines, parseHtml } from "./html.js";
 import { apiActionId, placeholderNames, toolName } from "./infer.js";
+import type { LayoutMemory } from "./layout.js";
 import { SPEC_PATHS, actionsFromOpenApi } from "./openapi.js";
 import { type ScannedEndpoint, sameSite, scanJs } from "./scan-js.js";
 import type { Session } from "./session.js";
@@ -11,6 +12,8 @@ export interface DiscoverOptions {
   blockList: BlockListConfig;
   maxPages?: number;
   maxScripts?: number;
+  /** Learns the site's page chrome from the pages read while discovering. */
+  layout?: LayoutMemory;
   log?: (message: string) => void;
 }
 
@@ -97,6 +100,7 @@ async function discoverFrontend(
     if (new URL(res.url).origin !== start.origin) continue;
 
     const page = parseHtml(res.text, res.url);
+    opts.layout?.observe(res.url, pageLines(page, res.url));
     if (page.csrfToken) session.headers["x-csrf-token"] = page.csrfToken;
     for (const form of page.forms) {
       const action = formAction(form, res.url);
