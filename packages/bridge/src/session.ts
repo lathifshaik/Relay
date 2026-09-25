@@ -5,11 +5,16 @@ export interface SessionOptions {
   cookie?: string;
   /** Bearer token to send on every request. */
   bearerToken?: string;
+  /** At most this many requests per second to the site. Defaults to 5. */
+  ratePerSecond?: number;
 }
 
 export interface SessionResponse {
   status: number;
+  /** Where the request ended up, after redirects. */
   url: string;
+  /** Where it was sent. */
+  requestUrl: string;
   contentType: string;
   text: string;
 }
@@ -24,6 +29,8 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_REDIRECTS = 10;
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
 const USER_AGENT = "relay-bridge/0.1 (+https://github.com/lathifshaik/Relay)";
+const DEFAULT_RATE = 5;
+const MAX_RETRY_AFTER_MS = 30_000;
 
 /**
  * A minimal HTTP client that keeps cookies across requests the way a browser
@@ -34,6 +41,8 @@ export class Session {
   private readonly timeoutMs: number;
   private readonly cookies = new Map<string, Map<string, string>>();
   private bearerToken: string | undefined;
+  private readonly minIntervalMs: number;
+  private nextSlot = 0;
   /** Extra headers replayed on every request (CSRF tokens and the like). */
   readonly headers: Record<string, string> = {};
 
@@ -41,6 +50,7 @@ export class Session {
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.bearerToken = opts.bearerToken;
+    this.minIntervalMs = 1000 / Math.max(0.1, opts.ratePerSecond ?? DEFAULT_RATE);
     if (opts.cookie) this.seedCookies(opts.cookie);
   }
 
@@ -61,7 +71,9 @@ export class Session {
     let method = (init.method ?? "GET").toUpperCase();
     let body = init.body;
 
+    let retried = false;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      await this.takeTurn();
       const headers: Record<string, string> = {
         "user-agent": USER_AGENT,
         accept: "application/json, text/html;q=0.9, */*;q=0.8",
@@ -83,6 +95,18 @@ export class Session {
       });
       this.storeCookies(current.hostname, res.headers);
 
+      // The site asked us to slow down: wait as told (briefly) and try once more.
+      if ((res.status === 429 || res.status === 503) && !retried) {
+        const wait = retryAfterMs(res.headers.get("retry-after"));
+        if (wait !== undefined && wait <= MAX_RETRY_AFTER_MS) {
+          retried = true;
+          await res.body?.cancel();
+          await sleep(wait);
+          hop--;
+          continue;
+        }
+      }
+
       const location = res.headers.get("location");
       if (res.status >= 300 && res.status < 400 && location) {
         current = new URL(location, current);
@@ -97,11 +121,20 @@ export class Session {
       return {
         status: res.status,
         url: current.toString(),
+        requestUrl: url,
         contentType: res.headers.get("content-type") ?? "",
         text: await readCapped(res),
       };
     }
     throw new Error(`Too many redirects starting at ${url}`);
+  }
+
+  /** Spaces requests out so the bridge never floods a site. */
+  private async takeTurn(): Promise<void> {
+    const now = Date.now();
+    const at = Math.max(now, this.nextSlot);
+    this.nextSlot = at + this.minIntervalMs;
+    if (at > now) await sleep(at - now);
   }
 
   private cookieHeader(host: string): string {
@@ -145,6 +178,18 @@ export class Session {
     }
     this.cookies.set("", jar);
   }
+}
+
+function retryAfterMs(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (!Number.isNaN(seconds)) return Math.max(0, seconds * 1000);
+  const date = Date.parse(value);
+  return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function readCapped(res: Response): Promise<string> {

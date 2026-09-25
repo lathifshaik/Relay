@@ -39,9 +39,10 @@ export async function startFixtureApp(): Promise<{ baseUrl: string; state: Fixtu
   });
   app.get("/static/app.js", (_req, res) => {
     res.type("js").send(
-      'async function list(){return fetch("/api/orders")}' +
-        "function one(id){return fetch(`/api/orders/${id}`)}" +
-        'function add(t,q){return fetch("/api/orders",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({title:t,qty:q})})}',
+      'async function listOrders(){return fetch("/api/orders")}' +
+        "function getOrder(id){return fetch(`/api/orders/${id}`)}" +
+        'async function placeOrder(t,q){const r=await fetch("/api/orders",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({title:t,qty:q})});toast("Order placed");return r}' +
+        'function e(t){return fetch("/api/stats")}',
     );
   });
   app.get("/contact", (_req, res) => {
@@ -68,6 +69,7 @@ export async function startFixtureApp(): Promise<{ baseUrl: string; state: Fixtu
     res.send("bye");
   });
   app.get("/admin", (_req, res) => res.type("html").send('<form><input name="danger"></form>'));
+  app.get("/api/stats", (_req, res) => res.json({ visits: 1 }));
   app.get("/api/profile", (req, res) => (authed(req) ? res.json({ name: "Ada" }) : res.status(401).json({})));
   app.get("/api/orders", (req, res) => (authed(req) ? res.json({ orders: state.orders }) : res.status(401).json({})));
   app.get("/api/orders/:id", (req, res) => {

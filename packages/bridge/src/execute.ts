@@ -1,4 +1,5 @@
 import { buildRouteUrl, methodHasBody, sanitiseValue } from "@relay/core";
+import { looksSignedOut } from "./auth.js";
 import { htmlToText, parseHtml } from "./html.js";
 import { placeholderNames } from "./infer.js";
 import type { Session, SessionResponse } from "./session.js";
@@ -11,6 +12,9 @@ export interface ActionResult {
   bytes: number;
   /** The reply was an HTML page; `body` is `{ url, text }`. */
   html: boolean;
+  /** The app answered as if the user were signed out. */
+  signedOut: boolean;
+  contentType: string;
 }
 
 const MAX_TEXT_CHARS = 20_000;
@@ -33,6 +37,8 @@ export function toResult(res: SessionResponse): ActionResult {
     body: sanitiseValue(readBody(res)),
     bytes: Buffer.byteLength(res.text),
     html: res.contentType.includes("html"),
+    signedOut: looksSignedOut(res),
+    contentType: res.contentType,
   };
 }
 

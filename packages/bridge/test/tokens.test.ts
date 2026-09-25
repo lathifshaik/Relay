@@ -69,7 +69,7 @@ describe("the bridge over MCP", () => {
   let app: Awaited<ReturnType<typeof startFixtureApp>>;
   let graph: BridgeGraph;
   let layout: LayoutMemory;
-  const session = new Session({ cookie: "sid=abc" });
+  const session = new Session({ cookie: "sid=abc", ratePerSecond: 1000 });
   const logs: string[] = [];
 
   beforeAll(async () => {
@@ -90,7 +90,10 @@ describe("the bridge over MCP", () => {
   }
 
   async function call(client: Client, name: string, args: Record<string, unknown>) {
-    const r = await client.callTool({ name, arguments: args });
+    let r = await client.callTool({ name, arguments: args });
+    const first = JSON.parse((r.content as Array<{ text: string }>)[0]?.text ?? "{}") as { next?: string };
+    const code = first.next ? /"_confirm": "([0-9a-f]+)"/.exec(first.next)?.[1] : undefined;
+    if (code) r = await client.callTool({ name, arguments: { ...args, _confirm: code } });
     return JSON.parse((r.content as Array<{ text: string }>)[0]?.text ?? "{}") as { status: number; body: Record<string, unknown> };
   }
 
@@ -105,17 +108,17 @@ describe("the bridge over MCP", () => {
 
   it("answers a repeat read with unchanged, and later with only what changed", async () => {
     const client = await connect();
-    await call(client, "get_api_orders", {});
-    expect((await call(client, "get_api_orders", {})).body).toEqual({ unchanged: true });
+    await call(client, "list_orders", {});
+    expect((await call(client, "list_orders", {})).body).toEqual({ unchanged: true });
 
-    await call(client, "post_api_orders", { title: "Scarf", qty: "1" });
-    const after = await call(client, "get_api_orders", {});
+    await call(client, "place_order", { title: "Scarf", qty: "1" });
+    const after = await call(client, "list_orders", {});
     expect(after.body["changes"]).toEqual([
       { path: "orders", added: expect.objectContaining({ title: "Scarf" }) },
     ]);
 
     const page1 = await call(client, "read_page", { path: "/orders" });
-    await call(client, "post_api_orders", { title: "Gloves", qty: "2" });
+    await call(client, "place_order", { title: "Gloves", qty: "2" });
     const page2 = await call(client, "read_page", { path: "/orders" });
     expect(page1.body["text"]).toBeDefined();
     expect(page2.body["changes"]).toEqual([{ path: "text", added: "Gloves × 2" }]);

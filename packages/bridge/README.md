@@ -45,14 +45,46 @@ get_api_orders → 200 · 903 B in → 117 B out (87% smaller) · 1 change since
 }
 ```
 
+## What each tool means
+
+Every action gets a name, a description and a risk level:
+
+- **Names come from the app's own code.** An API call inside `sendInvoice()` becomes the tool `send_invoice`. It's described as "POST /api/v2/x, called by the app's sendInvoice(). Afterwards the app shows: "Invoice sent"". Forms are named from their heading and button. Minified code has no useful names, so those endpoints keep path-based ids.
+- **Risk:** `read`, `write`, `destructive` (delete, cancel, revoke) or `external` (sends messages, charges money, publishes, places orders; usually can't be undone).
+- **MCP hints:** tools carry the standard annotations (`readOnlyHint`, `destructiveHint`, `openWorldHint`, `idempotentHint`), so clients can ask the user before risky calls.
+- **Confirmation:** with `--confirm risky` (the default), a destructive or external tool doesn't run on the first call. It returns what would happen and a one-time code bound to those exact inputs. The agent has to show the user and call again with `_confirm`. `--confirm writes` extends this to every change.
+- **Your corrections win:** `relay-bridge labels <url>` writes `~/.relay-bridge/<host>.labels.json`. Rename tools, rewrite descriptions, change risk, or set `"hidden": true`. Entries are keyed by `METHOD /path`, so they survive rescans.
+
 ## Signing in
 
-For pages behind a login, give the bridge your own session:
+Log in to the site in your own browser as usual. 2FA, single sign-on and CAPTCHAs are all handled by you, the way the site intends. Then hand the bridge that session:
 
-- `RELAY_BRIDGE_TOKEN`: an API token, sent as `Authorization: Bearer ...`
-- `RELAY_BRIDGE_COOKIE`: the `Cookie` header from a browser where you're logged in
+```sh
+relay-bridge login https://your-app.example.com
+# paste the Cookie request header (DevTools → Network) or an API token
+```
 
-The bridge does not log in with a password itself.
+The bridge checks that the session is signed in and saves it to `~/.relay-bridge/<host>.session.json` (readable only by you). `relay-bridge logout <url>` forgets it. `RELAY_BRIDGE_COOKIE` / `RELAY_BRIDGE_TOKEN` override it.
+
+When the session expires (a 401, a redirect to a login page, or a login form where data should be), tools return `SIGNED_OUT` with instructions to log in again, not the login page.
+
+The bridge never types passwords, creates accounts, or gets past 2FA or CAPTCHAs.
+
+## When the app changes
+
+- An API action that now gets a 405, a 410, a 404 on a fixed path, or an HTML page where data was expected returns `ENDPOINT_CHANGED`. The bridge then re-reads the site (at most every 10 minutes) and updates the tool list live (`notifications/tools/list_changed`).
+- If a reply loses fields it used to have, a `note` says so.
+- The bridge is a polite client: at most 5 requests a second by default (`--rate`), it honors `429`/`503` `Retry-After`, and it identifies itself honestly as `relay-bridge`. It doesn't try to get around a site that blocks it; use the site's official API or ask the owner to add Relay.
+
+## Site permission
+
+- **Owners can opt out.** A site can publish `/.well-known/relay.json`:
+  - `{"agents": "deny"}`: the bridge refuses to run.
+  - `{"agents": "official-only"}`: only a Relay manifest or OpenAPI spec is used, never the frontend.
+  - `{"agents": "allow"}`: everything is allowed.
+- **robots.txt:** a group for `relay-bridge` that disallows `/` counts as `deny`. Pages robots.txt disallows are skipped while scanning.
+- **Official sources come first.** They're always used when present.
+- **Terms:** when reading a frontend, the bridge reminds you to use it only where the site's terms allow.
 
 ## Options
 
@@ -61,7 +93,9 @@ The bridge does not log in with a password itself.
 | `--scan` | Print the discovered actions as JSON and exit |
 | `--save <file>` | Write the discovered actions to a file, e.g. to review or edit them |
 | `--graph <file>` | Serve actions from a saved file instead of discovering again |
-| `--read-only` | Only expose GET actions |
+| `--read-only` | Only expose actions that read |
+| `--confirm <policy>` | `risky` (default), `writes` or `none` |
+| `--rate <n>` | At most n requests per second to the site (default 5) |
 | `--max-pages <n>` | Pages to read when scanning the frontend (default 15) |
 | `--refresh` | Rescan the site even if its saved map is recent |
 | `--no-cache` | Don't read or write the saved map |

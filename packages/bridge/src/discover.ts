@@ -3,6 +3,8 @@ import { RELAY_PROTOCOL_VERSION, isBlocked } from "@relay/core";
 import { type HtmlForm, pageLines, parseHtml } from "./html.js";
 import { apiActionId, placeholderNames, toolName } from "./infer.js";
 import type { LayoutMemory } from "./layout.js";
+import { explain } from "./meaning.js";
+import { PolicyError, type SitePolicy, loadPolicy } from "./policy.js";
 import { SPEC_PATHS, actionsFromOpenApi } from "./openapi.js";
 import { type ScannedEndpoint, sameSite, scanJs } from "./scan-js.js";
 import type { Session } from "./session.js";
@@ -22,6 +24,7 @@ export type DiscoverySource = "relay" | "openapi" | "frontend";
 export interface DiscoverResult {
   graph: BridgeGraph;
   source: DiscoverySource;
+  policy: SitePolicy;
 }
 
 const DEFAULT_MAX_PAGES = 15;
@@ -43,15 +46,22 @@ export async function discover(
 ): Promise<DiscoverResult> {
   const start = new URL(startUrl);
   const log = opts.log ?? (() => {});
+  const policy = await loadPolicy(session, start.origin);
+  if (policy.agents === "deny") {
+    throw new PolicyError(
+      `${start.hostname} does not allow agents (${policy.source})${policy.message ? `: ${policy.message}` : ""}`,
+    );
+  }
   const finish = (actions: BridgeAction[], source: DiscoverySource, pages: string[] = []): DiscoverResult => ({
     source,
+    policy,
     graph: {
       relayVersion: RELAY_PROTOCOL_VERSION,
       appName: start.hostname,
       baseUrl: start.origin,
       generatedAt: new Date().toISOString(),
       pages,
-      actions: applyBlockList(dedupe(actions), opts.blockList),
+      actions: applyBlockList(dedupe(actions.map((a) => a.risk ? a : explain(a))), opts.blockList),
     },
   });
 
@@ -70,13 +80,19 @@ export async function discover(
     }
   }
 
+  if (policy.agents === "official-only") {
+    throw new PolicyError(
+      `${start.hostname} only allows agents through its official manifest or API spec, and publishes neither`,
+    );
+  }
   log("no manifest or spec; reading the frontend");
-  return discoverFrontend(session, start, opts, log, finish);
+  return discoverFrontend(session, start, policy, opts, log, finish);
 }
 
 async function discoverFrontend(
   session: Session,
   start: URL,
+  policy: SitePolicy,
   opts: DiscoverOptions,
   log: (message: string) => void,
   finish: (actions: BridgeAction[], source: DiscoverySource, pages: string[]) => DiscoverResult,
@@ -91,7 +107,12 @@ async function discoverFrontend(
 
   while (queue.length > 0 && visited.size < maxPages) {
     const url = queue.shift() as string;
-    if (visited.has(url) || isBlocked(new URL(url).pathname, opts.blockList)) continue;
+    const pathname = new URL(url).pathname;
+    if (visited.has(url) || isBlocked(pathname, opts.blockList)) continue;
+    if (!policy.robots.allows(pathname)) {
+      log(`skipping ${pathname} (robots.txt)`);
+      continue;
+    }
     visited.add(url);
     log(`reading ${new URL(url).pathname}`);
 
@@ -108,7 +129,10 @@ async function discoverFrontend(
     }
     for (const source of page.inlineScripts) endpoints.push(...scanJs(source, start.origin));
     for (const src of page.scriptUrls) {
-      if (sameSite(new URL(src).hostname, start.hostname)) scripts.add(src);
+      const script = new URL(src);
+      if (sameSite(script.hostname, start.hostname) && (script.origin !== start.origin || policy.robots.allows(script.pathname))) {
+        scripts.add(src);
+      }
     }
     for (const link of page.links) {
       const target = new URL(link.href);
@@ -139,7 +163,7 @@ function endpointAction(e: ScannedEndpoint, origin: string): BridgeAction {
   const accepts = e.method !== "GET" && e.method !== "DELETE" && e.bodyKeys.length === 0;
   if (accepts) inputs["body"] = { type: "object", description: "JSON body; its fields could not be read from the frontend" };
 
-  return {
+  const action: BridgeAction = {
     actionId: apiActionId(e.method, path),
     method: e.method,
     path,
@@ -150,6 +174,7 @@ function endpointAction(e: ScannedEndpoint, origin: string): BridgeAction {
     relayAccess: "allowed",
     target: { kind: "api", urlTemplate: absolute ? e.path : `${origin}${e.path}` },
   };
+  return explain(action, { ...(e.hint && { hint: e.hint }), ...(e.message && { message: e.message }) });
 }
 
 function formAction(form: HtmlForm, pageUrl: string): BridgeAction | undefined {

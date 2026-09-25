@@ -20,8 +20,19 @@ export interface FormTarget {
   fields: Array<{ name: string; kind: FormFieldKind }>;
 }
 
+/**
+ * How much an action can change:
+ * - `read`: only looks things up
+ * - `write`: changes data in the app, and can usually be changed back
+ * - `destructive`: deletes, cancels or revokes something
+ * - `external`: reaches people or money outside the app — sends a message,
+ *   charges a card, publishes — and usually can't be undone
+ */
+export type Risk = "read" | "write" | "destructive" | "external";
+
 export interface BridgeAction extends ActionDef {
   target: ApiTarget | FormTarget;
+  risk?: Risk;
 }
 
 export interface BridgeGraph extends ActionGraph {
