@@ -6,9 +6,9 @@ import type { LayoutMemory } from "./layout.js";
 import { explain } from "./meaning.js";
 import { PolicyError, type SitePolicy, loadPolicy } from "./policy.js";
 import { SPEC_PATHS, actionsFromOpenApi } from "./openapi.js";
-import { type ScannedEndpoint, sameSite, scanJs } from "./scan-js.js";
+import { type ScannedEndpoint, sameSite, scanJs, scanServerActions } from "./scan-js.js";
 import type { Session } from "./session.js";
-import type { BridgeAction, BridgeGraph, FormFieldKind } from "./types.js";
+import type { BridgeAction, BridgeGraph, FormFieldKind, UnresolvedAction } from "./types.js";
 
 export interface DiscoverOptions {
   blockList: BlockListConfig;
@@ -31,6 +31,12 @@ const DEFAULT_MAX_PAGES = 15;
 const DEFAULT_MAX_SCRIPTS = 30;
 const SKIP_LINK = /log\s*-?\s*out|sign\s*-?\s*out|delete|remove|unsubscribe|destroy/i;
 const SKIP_EXTENSION = /\.(pdf|zip|png|jpe?g|gif|svg|webp|mp4|mp3|csv|xlsx?|docx?)$/i;
+const MAX_SITEMAP_URLS = 500;
+const MAX_FAILURES_IN_A_ROW = 3;
+// Endpoints that manage the session itself. The bridge owns the session; an agent calling
+// these would sign the person out, or into something else.
+const SESSION_ENDPOINT =
+  /(^|[/_-])(log-?out|sign-?out|log-?in|sign-?in|register|sign-?up|password|reset|verify|otp|2fa|mfa|refresh|oauth|callback|session|token)s?([/_-]|$)/i;
 const SKIPPED_FIELD_TYPES = new Set(["hidden", "submit", "button", "reset", "image", "file", "password"]);
 
 /**
@@ -52,10 +58,16 @@ export async function discover(
       `${start.hostname} does not allow agents (${policy.source})${policy.message ? `: ${policy.message}` : ""}`,
     );
   }
-  const finish = (actions: BridgeAction[], source: DiscoverySource, pages: string[] = []): DiscoverResult => ({
+  const finish = (
+    actions: BridgeAction[],
+    source: DiscoverySource,
+    pages: string[] = [],
+    unresolved: UnresolvedAction[] = [],
+  ): DiscoverResult => ({
     source,
     policy,
     graph: {
+      ...(unresolved.length > 0 && { unresolved }),
       relayVersion: RELAY_PROTOCOL_VERSION,
       appName: start.hostname,
       baseUrl: start.origin,
@@ -65,13 +77,17 @@ export async function discover(
     },
   });
 
-  const relay = await fetchJson(session, `${start.origin}/relay/manifest`);
+  const relay = policy.robots.allows("/relay/manifest")
+    ? await fetchJson(session, `${start.origin}/relay/manifest`)
+    : undefined;
   if (isActionGraph(relay)) {
     log("found a Relay manifest");
     return finish(actionsFromRelay(relay, start.origin), "relay");
   }
 
   for (const path of SPEC_PATHS) {
+    // Probing is crawling: skip spec locations robots.txt rules out.
+    if (!policy.robots.allows(path)) continue;
     const spec = await fetchJson(session, `${start.origin}${path}`);
     const actions = spec === undefined ? [] : actionsFromOpenApi(spec, `${start.origin}${path}`);
     if (actions.length > 0) {
@@ -95,7 +111,7 @@ async function discoverFrontend(
   policy: SitePolicy,
   opts: DiscoverOptions,
   log: (message: string) => void,
-  finish: (actions: BridgeAction[], source: DiscoverySource, pages: string[]) => DiscoverResult,
+  finish: (actions: BridgeAction[], source: DiscoverySource, pages: string[], unresolved: UnresolvedAction[]) => DiscoverResult,
 ): Promise<DiscoverResult> {
   const maxPages = opts.maxPages ?? DEFAULT_MAX_PAGES;
   const maxScripts = opts.maxScripts ?? DEFAULT_MAX_SCRIPTS;
@@ -104,8 +120,24 @@ async function discoverFrontend(
   const scripts = new Set<string>();
   const endpoints: ScannedEndpoint[] = [];
   const actions: BridgeAction[] = [];
+  const unresolved: UnresolvedAction[] = [];
 
-  while (queue.length > 0 && visited.size < maxPages) {
+  // The sitemap says which pages matter; read those before wandering through links.
+  for (const url of await sitemapUrls(session, start, policy)) {
+    const key = pageKey(new URL(url));
+    if (!queue.includes(key)) queue.push(key);
+  }
+
+  const read = new Set<string>();
+  const retried = new Set<string>();
+  let attempts = 0;
+  let failuresInARow = 0;
+  while (queue.length > 0 && read.size < maxPages) {
+    // A site that keeps failing gets left alone: stop instead of working through the queue.
+    if (failuresInARow >= MAX_FAILURES_IN_A_ROW || attempts >= maxPages * 2) {
+      log(`stopping the scan: ${failuresInARow >= MAX_FAILURES_IN_A_ROW ? "the site keeps failing" : "page budget used up"}`);
+      break;
+    }
     const url = queue.shift() as string;
     const pathname = new URL(url).pathname;
     if (visited.has(url) || isBlocked(pathname, opts.blockList)) continue;
@@ -116,14 +148,41 @@ async function discoverFrontend(
     visited.add(url);
     log(`reading ${new URL(url).pathname}`);
 
+    attempts++;
     const res = await session.request(url).catch(() => undefined);
+    if (!res || res.status >= 500) failuresInARow++;
+    else failuresInARow = 0;
+    if (res && [502, 503, 504].includes(res.status)) {
+      // The site is struggling: ease off, and give this page one more go at the end.
+      session.slowDown();
+      log(`${pathname} → ${res.status}; slowing to ${session.requestsPerSecond.toFixed(1)} requests/s`);
+      if (!retried.has(url)) {
+        retried.add(url);
+        visited.delete(url);
+        queue.push(url);
+      }
+      continue;
+    }
     if (!res || res.status >= 400 || !res.contentType.includes("html")) continue;
+    read.add(url);
     if (new URL(res.url).origin !== start.origin) continue;
 
     const page = parseHtml(res.text, res.url);
     opts.layout?.observe(res.url, pageLines(page, res.url));
     if (page.csrfToken) session.headers["x-csrf-token"] = page.csrfToken;
     for (const form of page.forms) {
+      if (!form.native && !form.hasPassword) {
+        // No action or method: JavaScript submits it somewhere. Submitting the HTML
+        // form would silently do nothing, so leave it for code reading.
+        unresolved.push({
+          kind: "js-form",
+          name: form.name || `form ${form.index + 1}`,
+          where: new URL(res.url).pathname,
+          detail: "Submitted by JavaScript; where it goes is in the page's code.",
+          fields: form.fields.map((f) => f.name).filter(Boolean),
+        });
+        continue;
+      }
       const action = formAction(form, res.url);
       if (action) actions.push(action);
     }
@@ -143,14 +202,26 @@ async function discoverFrontend(
     }
   }
 
+  const serverActions = new Map<string, UnresolvedAction>();
   for (const src of [...scripts].slice(0, maxScripts)) {
     const res = await session.request(src).catch(() => undefined);
-    if (res && res.status < 400) endpoints.push(...scanJs(res.text, start.origin));
+    if (!res || res.status >= 400) continue;
+    endpoints.push(...scanJs(res.text, start.origin));
+    for (const sa of scanServerActions(res.text)) {
+      serverActions.set(sa.id, {
+        kind: "server-action",
+        name: sa.name,
+        id: sa.id,
+        where: new URL(src).pathname,
+        detail: "Next.js Server Action; its arguments are defined by the component that calls it.",
+      });
+    }
   }
+  unresolved.push(...serverActions.values());
   log(`scanned ${Math.min(scripts.size, maxScripts)} scripts`);
 
   for (const e of endpoints) actions.push(endpointAction(e, start.origin));
-  return finish(actions, "frontend", [...visited].map((k) => new URL(k).pathname));
+  return finish(actions, "frontend", [...read].map((k) => new URL(k).pathname), unresolved);
 }
 
 function endpointAction(e: ScannedEndpoint, origin: string): BridgeAction {
@@ -243,7 +314,38 @@ function actionsFromRelay(graph: ActionGraph, origin: string): BridgeAction[] {
 }
 
 function applyBlockList(actions: BridgeAction[], blockList: BlockListConfig): BridgeAction[] {
-  return actions.map((a) => (isBlocked(a.path, blockList) ? { ...a, relayAccess: "denied" as const } : a));
+  return actions.map((a) =>
+    isBlocked(a.path, blockList) || isSessionEndpoint(a) ? { ...a, relayAccess: "denied" as const } : a,
+  );
+}
+
+/** Changing the session (logout, login, reset…) is never an agent's action; reading it (GET /auth/me) is fine. */
+function isSessionEndpoint(a: BridgeAction): boolean {
+  return a.method !== "GET" && SESSION_ENDPOINT.test(a.path);
+}
+
+async function sitemapUrls(session: Session, start: URL, policy: SitePolicy): Promise<string[]> {
+  const listed = policy.robots.sitemaps.map((u) => new URL(u, start.origin).toString());
+  const sources = listed.length > 0 ? listed : [`${start.origin}/sitemap.xml`];
+  const urls: string[] = [];
+  for (const source of sources.slice(0, 3)) {
+    const res = await session.request(source).catch(() => undefined);
+    if (!res || res.status >= 400) continue;
+    for (const m of res.text.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/g)) {
+      let url: URL;
+      try {
+        url = new URL((m[1] as string).replace(/&amp;/g, "&"));
+      } catch {
+        continue;
+      }
+      // Nested sitemap indexes and other hosts are skipped; pages are what matter here.
+      if (url.origin !== start.origin || url.pathname.endsWith(".xml")) continue;
+      if (!policy.robots.allows(url.pathname)) continue;
+      urls.push(url.toString());
+      if (urls.length >= MAX_SITEMAP_URLS) return urls;
+    }
+  }
+  return urls;
 }
 
 function dedupe(actions: BridgeAction[]): BridgeAction[] {

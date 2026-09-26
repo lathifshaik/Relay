@@ -41,7 +41,7 @@ export class Session {
   private readonly timeoutMs: number;
   private readonly cookies = new Map<string, Map<string, string>>();
   private bearerToken: string | undefined;
-  private readonly minIntervalMs: number;
+  private minIntervalMs: number;
   private nextSlot = 0;
   /** Extra headers replayed on every request (CSRF tokens and the like). */
   readonly headers: Record<string, string> = {};
@@ -127,6 +127,15 @@ export class Session {
       };
     }
     throw new Error(`Too many redirects starting at ${url}`);
+  }
+
+  /** Halves the request rate (down to one every 4 s), e.g. after the site starts failing. */
+  slowDown(): void {
+    this.minIntervalMs = Math.min(4_000, Math.max(500, this.minIntervalMs * 2));
+  }
+
+  get requestsPerSecond(): number {
+    return 1000 / this.minIntervalMs;
   }
 
   /** Spaces requests out so the bridge never floods a site. */

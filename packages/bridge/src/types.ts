@@ -40,4 +40,23 @@ export interface BridgeGraph extends ActionGraph {
   /** Pages visited while discovering, as paths. */
   pages: string[];
   actions: BridgeAction[];
+  /**
+   * Things the site can do that pattern matching found but can't call safely
+   * yet: forms handled by JavaScript, framework RPCs such as Next.js Server
+   * Actions. Reading the code around them is what turns them into actions.
+   */
+  unresolved?: UnresolvedAction[];
+}
+
+export interface UnresolvedAction {
+  kind: "js-form" | "server-action";
+  /** A name from the code or the page, e.g. "submitContactForm" or "Send Message". */
+  name: string;
+  /** Page (for forms) or script URL (for server actions) where it was found. */
+  where: string;
+  detail: string;
+  /** Server Action id, for `kind: "server-action"`. */
+  id?: string;
+  /** Field names a JavaScript form shows, when it has them. */
+  fields?: string[];
 }

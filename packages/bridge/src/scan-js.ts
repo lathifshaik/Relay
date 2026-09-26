@@ -198,3 +198,18 @@ export function sameSite(a: string, b: string): boolean {
   const root = (h: string) => h.split(".").slice(-2).join(".");
   return a.includes(".") && b.includes(".") && root(a) === root(b);
 }
+
+export interface ScannedServerAction {
+  id: string;
+  name: string;
+}
+
+// Next.js: createServerReference("<id>", callServer, void 0, findSourceMapURL, "submitContactForm")
+const SERVER_REFERENCE = /createServerReference\)?\(\s*["']([0-9a-f]{40,42})["'][^()]*?["']([A-Za-z_$][\w$]*)["']\s*\)/g;
+
+/** Next.js Server Actions a bundle can call, by id and the name they were given in the source. */
+export function scanServerActions(source: string): ScannedServerAction[] {
+  const out = new Map<string, ScannedServerAction>();
+  for (const m of source.matchAll(SERVER_REFERENCE)) out.set(m[1] as string, { id: m[1] as string, name: m[2] as string });
+  return [...out.values()];
+}

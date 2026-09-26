@@ -52,6 +52,8 @@ function parseDeclared(text: string | undefined): Omit<SitePolicy, "source" | "r
 export interface RobotsRules {
   /** True when a group names this agent rather than falling back to `*`. */
   specific: boolean;
+  /** `Sitemap:` URLs the file lists. */
+  sitemaps: string[];
   allows(path: string): boolean;
 }
 
@@ -60,6 +62,7 @@ export function parseRobots(text: string | undefined, agent: string): RobotsRule
   const groups: Array<{ agents: string[]; rules: Array<{ allow: boolean; pattern: string }> }> = [];
   let current: (typeof groups)[number] | undefined;
   let lastWasAgent = false;
+  const sitemaps: string[] = [];
 
   for (const raw of (text ?? "").split(/\r?\n/)) {
     const line = raw.replace(/#.*/, "").trim();
@@ -67,6 +70,10 @@ export function parseRobots(text: string | undefined, agent: string): RobotsRule
     if (sep < 0) continue;
     const key = line.slice(0, sep).trim().toLowerCase();
     const value = line.slice(sep + 1).trim();
+    if (key === "sitemap") {
+      if (value) sitemaps.push(value);
+      continue;
+    }
     if (key === "user-agent") {
       if (!current || !lastWasAgent) {
         current = { agents: [], rules: [] };
@@ -89,6 +96,7 @@ export function parseRobots(text: string | undefined, agent: string): RobotsRule
 
   return {
     specific: mine.length > 0,
+    sitemaps,
     allows(path: string): boolean {
       let best: { allow: boolean; length: number } | undefined;
       for (const rule of rules) {

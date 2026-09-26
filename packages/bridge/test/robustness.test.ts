@@ -272,3 +272,112 @@ describe("being a polite client", () => {
     }
   });
 });
+
+describe("probing for specs", () => {
+  it("doesn't request spec locations robots.txt disallows", async () => {
+    const hits: string[] = [];
+    const app = express();
+    app.use((req, _res, next) => {
+      hits.push(req.path);
+      next();
+    });
+    app.get("/robots.txt", (_req, res) => res.type("text").send("User-agent: *\nDisallow: /api/"));
+    app.get("/", (_req, res) => res.type("html").send("<p>hi</p>"));
+    const { url, close } = await serve(app);
+    try {
+      await discover(fast(), url, { blockList: createBlockList() });
+      expect(hits.filter((p) => p.startsWith("/api/"))).toEqual([]);
+      expect(hits).toContain("/openapi.json");
+    } finally {
+      await close();
+    }
+  });
+});
+
+describe("modern frontends", () => {
+  it("reads the sitemap first, flags JavaScript forms, lists Server Actions, and hides session endpoints", async () => {
+    const app = express();
+    app.get("/robots.txt", (_req, res) => res.type("text").send("User-agent: *\nAllow: /\nSitemap: /sitemap.xml"));
+    app.get("/sitemap.xml", (req, res) =>
+      res.type("xml").send(`<urlset><url><loc>http://${req.headers.host}/contact</loc></url></urlset>`),
+    );
+    app.get("/", (_req, res) => res.type("html").send('<script src="/app.js"></script><p>home, no links</p>'));
+    app.get("/contact", (_req, res) =>
+      res.type("html").send('<form><input name="email"><textarea name="message"></textarea><button>Send</button></form>'),
+    );
+    app.get("/app.js", (_req, res) =>
+      res
+        .type("js")
+        .send(
+          'let x=(0,m.createServerReference)("60dec564a4f3572debed8cd2ef5b0b377cc3250406",m.callServer,void 0,m.findSourceMapURL,"submitContactForm");' +
+            'async function signOut(){return fetch("/api/auth/logout",{method:"POST"})}' +
+            'async function loadMe(){return fetch("/api/auth/me")}',
+        ),
+    );
+    const { url, close } = await serve(app);
+    try {
+      const { graph } = await discover(fast(), url, { blockList: createBlockList() });
+      expect(graph.pages).toContain("/contact");
+      expect(graph.actions.find((a) => a.target.kind === "form")).toBeUndefined();
+      expect(graph.unresolved).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "js-form", where: "/contact", fields: ["email", "message"] }),
+          expect.objectContaining({ kind: "server-action", name: "submitContactForm" }),
+        ]),
+      );
+      const byPath = Object.fromEntries(graph.actions.map((a) => [`${a.method} ${a.path}`, a.relayAccess]));
+      expect(byPath["POST /api/auth/logout"]).toBe("denied");
+      expect(byPath["GET /api/auth/me"]).toBe("allowed");
+    } finally {
+      await close();
+    }
+  });
+});
+
+describe("struggling sites", () => {
+  it("slows down on a 503 and reads the page again at the end", async () => {
+    let attempts = 0;
+    const app = express();
+    app.get("/", (_req, res) => res.type("html").send('<a href="/busy">busy</a><a href="/calm">calm</a>'));
+    app.get("/busy", (_req, res) => {
+      attempts++;
+      if (attempts === 1) return res.status(503).json({ error: "worker exceeded resource limits" });
+      return res.type("html").send("<p>ok now</p>");
+    });
+    app.get("/calm", (_req, res) => res.type("html").send("<p>calm</p>"));
+    const { url, close } = await serve(app);
+    try {
+      const session = new Session({ ratePerSecond: 1000 });
+      const { graph } = await discover(session, url, { blockList: createBlockList() });
+      expect(attempts).toBe(2);
+      expect(graph.pages).toEqual(["/", "/calm", "/busy"]);
+      expect(session.requestsPerSecond).toBeLessThanOrEqual(2);
+    } finally {
+      await close();
+    }
+  }, 15_000);
+});
+
+describe("a site that is down", () => {
+  it("stops after three server errors in a row instead of working through the whole sitemap", async () => {
+    let hits = 0;
+    const app = express();
+    app.get("/sitemap.xml", (req, res) =>
+      res.type("xml").send(
+        `<urlset>${Array.from({ length: 200 }, (_, i) => `<url><loc>http://${req.headers.host}/p${i}</loc></url>`).join("")}</urlset>`,
+      ),
+    );
+    app.get("/", (_req, res) => res.type("html").send("<p>home</p>"));
+    app.get(/^\/p\d+$/, (_req, res) => {
+      hits++;
+      res.status(503).json({ error: "down" });
+    });
+    const { url, close } = await serve(app);
+    try {
+      await discover(new Session({ ratePerSecond: 1000 }), url, { blockList: createBlockList() });
+      expect(hits).toBe(3);
+    } finally {
+      await close();
+    }
+  }, 30_000);
+});

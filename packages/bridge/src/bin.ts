@@ -9,7 +9,7 @@ import { discover } from "./discover.js";
 import { LayoutMemory } from "./layout.js";
 import { type Labels, applyLabels, labelsTemplate } from "./meaning.js";
 import { type BridgeMcpServer, exposedActions, runBridgeServer } from "./server.js";
-import { Session } from "./session.js";
+import { Session, type SessionOptions } from "./session.js";
 import type { BridgeGraph } from "./types.js";
 
 const USAGE = `Usage:
@@ -26,7 +26,8 @@ Options:
   --read-only         Only expose actions that read
   --confirm <policy>  risky (default): destructive and external actions need
                       the user's confirmation; writes: every change; none
-  --rate <n>          At most n requests per second to the site (default 5)
+  --rate <n>          At most n requests per second to the site (default 2 while
+                      scanning, 5 when serving; lower it for small sites)
   --max-pages <n>     Pages to read when scanning the frontend (default 15)
   --refresh           Rescan the site even if a saved map is recent
   --no-cache          Don't read or write the saved map
@@ -115,7 +116,8 @@ async function main(): Promise<void> {
   }
   if (!args.url && !args.graph) throw new Error("help");
 
-  const session = await openSession(args);
+  const credentials = await sessionOptions(args);
+  const session = new Session({ ...credentials, ...(args.rate !== undefined && { ratePerSecond: args.rate }) });
   const labelsPath = args.url ? labelsFile(args.cacheDir, args.url) : undefined;
   const labels = labelsPath ? await readLabels(labelsPath) : {};
 
@@ -126,13 +128,22 @@ async function main(): Promise<void> {
     siteUrl && args.cache && !args.refresh && !args.graph ? await loadSite(args.cacheDir, siteUrl) : undefined;
 
   const rediscover = async (): Promise<BridgeGraph> => {
-    const result = await discover(session, siteUrl as string, {
+    // Scanning reads many pages back to back; go gently so small sites don't buckle.
+    const scanner = new Session({ ...credentials, ratePerSecond: args.rate ?? 2 });
+    const result = await discover(scanner, siteUrl as string, {
       blockList: createBlockList(),
       layout,
       ...(args.maxPages !== undefined && { maxPages: args.maxPages }),
       log,
     });
+    // Headers learned while scanning (e.g. a CSRF token) are needed when calling actions too.
+    Object.assign(session.headers, scanner.headers);
     log(`found ${result.graph.actions.length} actions (source: ${result.source})`);
+    for (const u of result.graph.unresolved ?? []) {
+      log(`  needs code reading: ${u.kind} "${u.name}" (${u.where})${u.fields?.length ? ` fields: ${u.fields.join(", ")}` : ""}`);
+    }
+    const denied = result.graph.actions.filter((a) => a.relayAccess === "denied");
+    if (denied.length > 0) log(`  not exposed: ${denied.map((a) => `${a.method} ${a.path}`).join(", ")}`);
     if (result.source === "frontend") {
       log(`reading ${new URL(siteUrl as string).host}'s frontend — only use the bridge where its terms allow it`);
     }
@@ -213,18 +224,14 @@ async function main(): Promise<void> {
   });
 }
 
-async function openSession(args: Args): Promise<Session> {
+async function sessionOptions(args: Args): Promise<SessionOptions> {
   const token = process.env["RELAY_BRIDGE_TOKEN"];
   const cookie = process.env["RELAY_BRIDGE_COOKIE"];
   const saved = !token && !cookie && args.url ? await loadSession(args.cacheDir, args.url) : undefined;
   if (saved) log(`using the session saved on ${saved.savedAt} (relay-bridge logout to forget it)`);
   const bearer = token ?? saved?.token;
   const jar = cookie ?? saved?.cookie;
-  return new Session({
-    ...(bearer && { bearerToken: bearer }),
-    ...(jar && { cookie: jar }),
-    ...(args.rate !== undefined && { ratePerSecond: args.rate }),
-  });
+  return { ...(bearer && { bearerToken: bearer }), ...(jar && { cookie: jar }) };
 }
 
 async function login(args: Args): Promise<void> {

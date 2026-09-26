@@ -22,6 +22,8 @@ export interface HtmlForm {
   action: string;
   method: "GET" | "POST";
   hasPassword: boolean;
+  /** The form names where it submits (`action`/`method`); without either, JavaScript handles it. */
+  native: boolean;
   fields: HtmlField[];
 }
 
@@ -164,6 +166,7 @@ function parseForm(
     action: resolve(form.getAttribute("action") ?? "") ?? pageUrl,
     method: (form.getAttribute("method") ?? "get").toUpperCase() === "POST" ? "POST" : "GET",
     hasPassword: form.querySelector('input[type="password"]') !== null,
+    native: form.hasAttribute("action") || form.hasAttribute("method"),
     fields,
   };
 }

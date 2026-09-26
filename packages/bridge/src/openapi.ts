@@ -2,17 +2,11 @@ import type { IOField } from "@relay/core";
 import { normaliseMethod, toolName } from "./infer.js";
 import type { BridgeAction } from "./types.js";
 
-/** Where apps usually serve their OpenAPI / Swagger document. */
-export const SPEC_PATHS = [
-  "/openapi.json",
-  "/swagger.json",
-  "/api/openapi.json",
-  "/api/swagger.json",
-  "/api-docs",
-  "/v3/api-docs",
-  "/api/docs/openapi.json",
-  "/.well-known/openapi.json",
-];
+/**
+ * Where apps usually serve their OpenAPI / Swagger document. Kept short on
+ * purpose: each miss costs the site a full 404 render.
+ */
+export const SPEC_PATHS = ["/openapi.json", "/swagger.json", "/api/openapi.json", "/v3/api-docs"];
 
 type Json = Record<string, unknown>;
 const MAX_REF_DEPTH = 6;
