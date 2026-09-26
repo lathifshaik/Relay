@@ -1,8 +1,12 @@
-import type { ActionDef, ActionGraph, BlockListConfig, TokenStore } from "@relay/core";
+import type { ActionDef, ActionGraph, BlockListConfig, ConnectOptions, RelayResponse, TokenStore } from "@relay/core";
 import {
+  MemoryTokenStore,
   RELAY_PROTOCOL_VERSION,
   RelayUpstreamError,
   createBlockList,
+  handleConnectRoute,
+  parseFormBody,
+  resolveConnect,
   handleAct,
   handleManifest,
   handleState,
@@ -22,12 +26,24 @@ export interface RelayMiddlewareOptions {
   buildState?: (req: Request) => Promise<Record<string, unknown>> | Record<string, unknown>;
   /** How long /relay/act waits for a handler to respond. Defaults to 30s. */
   handlerTimeoutMs?: number;
+  /**
+   * Lets people connect agents to their own account: the agent gets a code,
+   * the person approves it on /relay/approve, and the agent receives a token
+   * scoped to what they allowed. Needs `signingKey` and `identify`.
+   */
+  connect?: ConnectOptions;
+  /** Who is signed in, using your app's own login (session, cookie, ...). Return their user id. */
+  identify?: (req: Request) => Promise<string | undefined> | string | undefined;
 }
 
 const DEFAULT_HANDLER_TIMEOUT_MS = 30_000;
 
 interface RelayLocal {
   isAgent: boolean;
+  /** The user the agent acts for, when it connected through /relay/connect. */
+  subject?: string;
+  /** Action ids the agent's token allows. */
+  scope?: readonly string[];
   captured?: { data: unknown };
 }
 
@@ -54,6 +70,11 @@ export function middleware(opts: RelayMiddlewareOptions): RequestHandler {
   let handlersById: Map<string, DiscoveredAction["handler"]> | undefined;
 
   const blockList = opts.blockList ?? createBlockList();
+  // Connecting agents needs revocable tokens, so it brings a token store if none was given.
+  const tokenStore = opts.tokenStore ?? (opts.connect ? new MemoryTokenStore() : undefined);
+  const connect = resolveConnect(opts.connect, opts.signingKey, tokenStore);
+  if (opts.connect && !connect) throw new Error("@relay/express: `connect` needs a signingKey");
+  if (connect && !opts.identify) throw new Error("@relay/express: `connect` needs `identify` to know who is approving");
 
   function ensureScanned(req: Request): {
     graph: ActionGraph;
@@ -81,7 +102,7 @@ export function middleware(opts: RelayMiddlewareOptions): RequestHandler {
       graph,
       blockList,
       ...(opts.signingKey !== undefined && { signingKey: opts.signingKey }),
-      ...(opts.tokenStore !== undefined && { tokenStore: opts.tokenStore }),
+      ...(tokenStore !== undefined && { tokenStore }),
       authDisabled: opts.authDisabled ?? !opts.signingKey,
     };
   }
@@ -101,11 +122,24 @@ export function middleware(opts: RelayMiddlewareOptions): RequestHandler {
       };
     }
 
-    if (!req.path.startsWith("/relay")) return next();
+    if (!req.path.startsWith("/relay") && req.path !== "/.well-known/relay.json") return next();
 
     const token = extractToken(req);
 
     try {
+      const connectResult = await handleConnectRoute(buildContext(req), connect, {
+        method: req.method,
+        path: req.path,
+        query: Object.fromEntries(
+          Object.entries(req.query).map(([k, v]) => [k, typeof v === "string" ? v : undefined]),
+        ),
+        body: await readBody(req),
+        ...(req.get("content-type") !== undefined && { contentType: req.get("content-type") as string }),
+        origin: `${req.protocol}://${req.get("host")}`,
+        identify: async () => (opts.identify ? opts.identify(req) : undefined),
+      });
+      if (connectResult) return send(res, connectResult);
+
       if (req.method === "GET" && req.path === "/relay/manifest") {
         const result = await handleManifest(buildContext(req), { token });
         return send(res, result);
@@ -137,7 +171,7 @@ export function middleware(opts: RelayMiddlewareOptions): RequestHandler {
           buildContext(req),
           { token, body: req.body },
           actionId,
-          async (action, validatedInputs) => {
+          async (action, validatedInputs, context) => {
             if (!handler) throw new Error(`No handler for action ${action.actionId}`);
             return invokeOriginalHandler(
               handler,
@@ -146,6 +180,7 @@ export function middleware(opts: RelayMiddlewareOptions): RequestHandler {
               validatedInputs,
               action.path,
               opts.handlerTimeoutMs ?? DEFAULT_HANDLER_TIMEOUT_MS,
+              context.claims ? { subject: context.claims.sub, scope: context.claims.scope } : {},
             );
           },
         );
@@ -159,8 +194,34 @@ export function middleware(opts: RelayMiddlewareOptions): RequestHandler {
   };
 }
 
-function send(res: Response, result: { status: number; body: unknown }): void {
-  res.status(result.status).json(result.body);
+function send(res: Response, result: RelayResponse): void {
+  for (const [name, value] of Object.entries(result.headers ?? {})) res.setHeader(name, value);
+  if (result.status >= 300 && result.status < 400 && result.headers?.["location"]) {
+    res.status(result.status).end();
+  } else if (result.html !== undefined) {
+    res.status(result.status).type("html").send(result.html);
+  } else {
+    res.status(result.status).json(result.body);
+  }
+}
+
+/** The request body, parsing form posts (the consent page) if no body parser did. */
+async function readBody(req: Request): Promise<unknown> {
+  if (req.body !== undefined && !(isEmptyObject(req.body) && req.readable)) return req.body;
+  const type = req.get("content-type") ?? "";
+  if (!type.includes("application/x-www-form-urlencoded") || !req.readable) return req.body;
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > 64 * 1024) break;
+    chunks.push(chunk as Buffer);
+  }
+  return parseFormBody(Buffer.concat(chunks).toString("utf8"));
+}
+
+function isEmptyObject(v: unknown): boolean {
+  return v !== null && typeof v === "object" && Object.keys(v as object).length === 0;
 }
 
 function extractToken(req: Request): string | undefined {
@@ -177,8 +238,9 @@ async function invokeOriginalHandler(
   validatedInputs: Record<string, unknown>,
   routePath: string,
   timeoutMs: number,
+  agent: { subject?: string; scope?: readonly string[] },
 ): Promise<unknown> {
-  const relayLocal: RelayLocal = { isAgent: true };
+  const relayLocal: RelayLocal = { isAgent: true, ...agent };
 
   const fakeReq = Object.create(originalReq) as RelayReq;
   fakeReq.body = validatedInputs;

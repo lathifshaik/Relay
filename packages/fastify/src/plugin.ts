@@ -1,14 +1,21 @@
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type {
   ActionGraph,
   BlockListConfig,
+  ConnectOptions,
   EmitterContext,
+  RelayResponse,
   TokenStore,
 } from "@relay/core";
 import {
+  MemoryTokenStore,
   RELAY_PROTOCOL_VERSION,
   RelayUpstreamError,
   buildRouteUrl,
   createBlockList,
+  handleConnectRoute,
+  parseFormBody,
+  resolveConnect,
   handleAct,
   handleManifest,
   handleState,
@@ -29,19 +36,57 @@ export interface RelayFastifyOptions {
   buildState?: (
     request: FastifyRequest,
   ) => Promise<Record<string, unknown>> | Record<string, unknown>;
+  /** Lets people connect agents to their account (see @relay/core connect). Needs `signingKey` and `identify`. */
+  connect?: ConnectOptions;
+  /** Who is signed in, using your app's own auth. Return their user id. */
+  identify?: (request: FastifyRequest) => Promise<string | undefined> | string | undefined;
+}
+
+export interface RelayAgent {
+  /** The user the agent acts for. */
+  subject: string;
+  scope: readonly string[];
 }
 
 declare module "fastify" {
   interface FastifyReply {
     relayRespond(data: unknown): FastifyReply;
   }
+  interface FastifyRequest {
+    /** Set when an agent calls this route through /relay/act: who it acts for. */
+    relayAgent: RelayAgent | null;
+  }
 }
+
+const AGENT_HEADER = "x-relay-agent";
 
 const plugin: FastifyPluginAsync<RelayFastifyOptions> = async (fastify, opts) => {
   const collector = new FastifyRouteCollector();
   collector.attach(fastify);
 
   const blockList = opts.blockList ?? createBlockList();
+  const tokenStore = opts.tokenStore ?? (opts.connect ? new MemoryTokenStore() : undefined);
+  const connect = resolveConnect(opts.connect, opts.signingKey, tokenStore);
+  if (opts.connect && !connect) throw new Error("@relay/fastify: `connect` needs a signingKey");
+  if (connect && !opts.identify) throw new Error("@relay/fastify: `connect` needs `identify` to know who is approving");
+
+  // Who an agent acts for travels to replayed routes in a header signed with a
+  // key that only exists in this process; the header is stripped from every
+  // incoming request, so it can't be supplied from outside.
+  const agentKey = randomBytes(32);
+  fastify.decorateRequest("relayAgent", null);
+  fastify.addHook("onRequest", async (request) => {
+    const header = request.headers[AGENT_HEADER];
+    delete request.headers[AGENT_HEADER];
+    if (typeof header === "string") request.relayAgent = openAgentHeader(header, agentKey) ?? null;
+  });
+
+  // The consent page posts a plain HTML form.
+  if (connect && !fastify.hasContentTypeParser("application/x-www-form-urlencoded")) {
+    fastify.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_req, body, done) => {
+      done(null, parseFormBody(body as string));
+    });
+  }
 
   // Convenience alias for reply.send — keeps the dev-facing API consistent across adapters.
   fastify.decorateReply("relayRespond", function (this: FastifyReply, data: unknown) {
@@ -65,9 +110,30 @@ const plugin: FastifyPluginAsync<RelayFastifyOptions> = async (fastify, opts) =>
     graph: buildGraph(),
     blockList,
     ...(opts.signingKey !== undefined && { signingKey: opts.signingKey }),
-    ...(opts.tokenStore !== undefined && { tokenStore: opts.tokenStore }),
+    ...(tokenStore !== undefined && { tokenStore }),
     authDisabled: opts.authDisabled ?? !opts.signingKey,
   });
+
+  const connectRoute = async (request: FastifyRequest, reply: FastifyReply) => {
+    const url = new URL(request.url, `${request.protocol}://${request.host}`);
+    const result = await handleConnectRoute(buildCtx(), connect, {
+      method: request.method,
+      path: url.pathname,
+      query: Object.fromEntries(url.searchParams.entries()),
+      body: request.body ?? {},
+      contentType: request.headers["content-type"] ?? "",
+      origin: url.origin,
+      identify: async () => (opts.identify ? opts.identify(request) : undefined),
+    });
+    if (!result) return reply.callNotFound();
+    return sendResult(reply, result);
+  };
+  fastify.get("/.well-known/relay.json", connectRoute);
+  fastify.post("/relay/connect", connectRoute);
+  fastify.post("/relay/connect/token", connectRoute);
+  fastify.route({ method: ["GET", "POST"], url: "/relay/approve", handler: connectRoute });
+  fastify.get("/relay/connections", connectRoute);
+  fastify.post("/relay/connections/:id/revoke", connectRoute);
 
   fastify.get("/relay/manifest", async (request, reply) => {
     const result = await handleManifest(buildCtx(), { token: extractToken(request) });
@@ -101,8 +167,16 @@ const plugin: FastifyPluginAsync<RelayFastifyOptions> = async (fastify, opts) =>
         buildCtx(),
         { token: extractToken(request), body: request.body },
         actionId,
-        async (action, validatedInputs) =>
-          invokeViaInject(fastify, collector, action.actionId, validatedInputs),
+        async (action, validatedInputs, context) =>
+          invokeViaInject(
+            fastify,
+            collector,
+            action.actionId,
+            validatedInputs,
+            context.claims
+              ? sealAgentHeader({ subject: context.claims.sub, scope: context.claims.scope }, agentKey)
+              : undefined,
+          ),
       );
       return reply.status(result.status).send(result.body);
     },
@@ -126,6 +200,7 @@ async function invokeViaInject(
   collector: FastifyRouteCollector,
   actionId: string,
   validatedInputs: Record<string, unknown>,
+  agentHeader: string | undefined,
 ): Promise<unknown> {
   const found = collector.actions.find((d) => d.action.actionId === actionId);
   if (!found) throw new Error(`No route for action ${actionId}`);
@@ -133,13 +208,14 @@ async function invokeViaInject(
   const method = found.action.method;
   const url = buildRouteUrl(found.routePath, method, validatedInputs);
 
+  const headers: Record<string, string> = {};
+  if (agentHeader) headers[AGENT_HEADER] = agentHeader;
+  if (methodHasBody(method)) headers["content-type"] = "application/json";
   const injected = await fastify.inject({
     method,
     url,
-    ...(methodHasBody(method) && {
-      payload: validatedInputs,
-      headers: { "content-type": "application/json" },
-    }),
+    headers,
+    ...(methodHasBody(method) && { payload: validatedInputs }),
   });
 
   if (!isSuccessStatus(injected.statusCode)) throw new RelayUpstreamError(injected.statusCode);
@@ -148,5 +224,31 @@ async function invokeViaInject(
     return JSON.parse(injected.body);
   } catch {
     return injected.body;
+  }
+}
+
+function sendResult(reply: FastifyReply, result: RelayResponse): FastifyReply {
+  reply.headers(result.headers ?? {});
+  if (result.status >= 300 && result.status < 400 && result.headers?.["location"]) {
+    return reply.status(result.status).send();
+  }
+  if (result.html !== undefined) return reply.status(result.status).type("text/html; charset=utf-8").send(result.html);
+  return reply.status(result.status).send(result.body);
+}
+
+function sealAgentHeader(agent: RelayAgent, key: Buffer): string {
+  const payload = Buffer.from(JSON.stringify(agent)).toString("base64url");
+  return `${payload}.${createHmac("sha256", key).update(payload).digest("base64url")}`;
+}
+
+function openAgentHeader(header: string, key: Buffer): RelayAgent | undefined {
+  const [payload = "", sig = ""] = header.split(".");
+  const expected = Buffer.from(createHmac("sha256", key).update(payload).digest("base64url"));
+  const given = Buffer.from(sig);
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return undefined;
+  try {
+    return JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as RelayAgent;
+  } catch {
+    return undefined;
   }
 }

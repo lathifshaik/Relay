@@ -3,6 +3,7 @@ import path from "node:path";
 import { createBlockList } from "@relay/core";
 import { forgetSession, loadSession, looksSignedOut, parsePastedSession, saveSession } from "./auth.js";
 import { DEFAULT_CACHE_DIR, loadSite, saveSite } from "./cache.js";
+import { connectWithRelay, supportsConnect } from "./connect-client.js";
 import type { ConfirmPolicy } from "./confirm.js";
 import { discover } from "./discover.js";
 import { LayoutMemory } from "./layout.js";
@@ -13,7 +14,8 @@ import type { BridgeGraph } from "./types.js";
 
 const USAGE = `Usage:
   relay-bridge <url> [options]     Serve the app as an MCP server (stdio)
-  relay-bridge login <url>         Hand the bridge your signed-in session
+  relay-bridge login <url>         Connect to your account (approve in the browser on
+                                   Relay sites; paste your session elsewhere)
   relay-bridge logout <url>        Forget the saved session
   relay-bridge labels <url>        Write an editable labels file for the app's tools
 
@@ -30,6 +32,7 @@ Options:
   --no-cache          Don't read or write the saved map
   --cache-dir <dir>   Where site maps, sessions and labels are kept
                       (default ~/.relay-bridge)
+  --paste             login: paste a session even if the site supports Relay connect
 
 Signing in: log in to the site in your own browser as usual (2FA and single
 sign-on included), then run \`relay-bridge login <url>\` and paste your Cookie
@@ -49,6 +52,8 @@ interface Args {
   refresh: boolean;
   cache: boolean;
   cacheDir: string;
+  /** login: skip the Relay connect flow and paste a session instead. */
+  paste: boolean;
 }
 
 const RESCAN_AFTER_MS = 10 * 60 * 1000;
@@ -62,6 +67,7 @@ function parseArgs(argv: string[]): Args {
     refresh: false,
     cache: true,
     cacheDir: DEFAULT_CACHE_DIR,
+    paste: false,
   };
   const first = argv[0];
   if (first === "login" || first === "logout" || first === "labels") {
@@ -86,6 +92,7 @@ function parseArgs(argv: string[]): Args {
     } else if (a === "--rate") args.rate = Number(next());
     else if (a === "--max-pages") args.maxPages = Number(next());
     else if (a === "--refresh") args.refresh = true;
+    else if (a === "--paste") args.paste = true;
     else if (a === "--no-cache") args.cache = false;
     else if (a === "--cache-dir") args.cacheDir = next();
     else if (a === "--help" || a === "-h") throw new Error("help");
@@ -223,6 +230,22 @@ async function openSession(args: Args): Promise<Session> {
 async function login(args: Args): Promise<void> {
   if (!args.url) throw new Error("help");
   const { origin, host } = new URL(args.url);
+
+  // Relay sites let you approve the agent on their own page: no passwords or cookies to copy.
+  const connectUrl = args.paste ? undefined : await supportsConnect(new Session(), origin);
+  if (connectUrl) {
+    const result = await connectWithRelay(new Session(), connectUrl, {
+      agentName: "relay-bridge",
+      onPrompt: ({ userCode, url, expiresInSeconds }) =>
+        process.stderr.write(
+          `\n${host} supports connecting agents.\n  Open:  ${url}\n  Check the code there is ${userCode}, then approve.\n  (waiting up to ${Math.round(expiresInSeconds / 60)} min)\n\n`,
+        ),
+    });
+    const file = await saveSession(args.cacheDir, args.url, { token: result.token });
+    log(`connected to ${host} with access to ${result.scope.length} action(s); saved in ${file} (readable only by you)`);
+    return;
+  }
+
   process.stderr.write(
     [
       `To connect ${host}:`,

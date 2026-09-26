@@ -30,6 +30,7 @@ export { DEFAULT_BLOCKED_PATTERNS, createBlockList, isBlocked } from "./block-li
 
 export type {
   EmitterContext,
+  InvokeContext,
   InvokeOriginalHandler,
   RelayRequest,
   RelayResponse,
@@ -37,7 +38,24 @@ export type {
 export { handleAct, handleManifest, handleState, handleValidate } from "./emitter.js";
 
 export type { IssueTokenOptions, TokenClaims, TokenStore, VerifyResult } from "./token.js";
-export { MemoryTokenStore, hasScope, issueToken, verifyToken } from "./token.js";
+export { MemoryTokenStore, hasScope, issueToken, mintToken, verifyToken } from "./token.js";
+
+export type {
+  AgentGrant,
+  ConnectOptions,
+  ConnectRequest,
+  ConnectionStore,
+  PendingConnection,
+  ResolvedConnect,
+} from "./connect.js";
+export {
+  MemoryConnectionStore,
+  grantableActions,
+  handleConnectRoute,
+  normaliseUserCode,
+  parseFormBody,
+  resolveConnect,
+} from "./connect.js";
 
 export type { DescribeAnnotation } from "./describe.js";
 export { describe, getAnnotation, mergeAnnotation } from "./describe.js";

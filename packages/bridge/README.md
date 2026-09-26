@@ -57,14 +57,16 @@ Every action gets a name, a description and a risk level:
 
 ## Signing in
 
-Log in to the site in your own browser as usual. 2FA, single sign-on and CAPTCHAs are all handled by you, the way the site intends. Then hand the bridge that session:
+**On sites that run Relay with `connect` turned on**, `relay-bridge login <url>` shows a link and a code. Open it, sign in to the site your usual way, tick what the agent may do, and approve. The bridge receives a token limited to what you approved, which you can revoke on the site at any time. No passwords or cookies change hands.
+
+**Everywhere else**, log in to the site in your own browser as usual. 2FA, single sign-on and CAPTCHAs are all handled by you, the way the site intends. Then hand the bridge that session:
 
 ```sh
 relay-bridge login https://your-app.example.com
 # paste the Cookie request header (DevTools → Network) or an API token
 ```
 
-The bridge checks that the session is signed in and saves it to `~/.relay-bridge/<host>.session.json` (readable only by you). `relay-bridge logout <url>` forgets it. `RELAY_BRIDGE_COOKIE` / `RELAY_BRIDGE_TOKEN` override it.
+(`--paste` forces this on Relay sites too.) The bridge checks that the session is signed in and saves it to `~/.relay-bridge/<host>.session.json` (readable only by you). `relay-bridge logout <url>` forgets it. `RELAY_BRIDGE_COOKIE` / `RELAY_BRIDGE_TOKEN` override it.
 
 When the session expires (a 401, a redirect to a login page, or a login form where data should be), tools return `SIGNED_OUT` with instructions to log in again, not the login page.
 

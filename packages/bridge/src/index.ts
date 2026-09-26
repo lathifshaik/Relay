@@ -41,3 +41,5 @@ export { applyLabels, classifyRisk, endpointKey, explain, humanize, labelsTempla
 export type { RobotsRules, SitePolicy } from "./policy.js";
 export { BRIDGE_AGENT, PolicyError, loadPolicy, parseRobots } from "./policy.js";
 export type { Risk } from "./types.js";
+export type { ConnectClientOptions, ConnectPrompt } from "./connect-client.js";
+export { connectWithRelay, supportsConnect } from "./connect-client.js";

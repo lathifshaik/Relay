@@ -28,11 +28,20 @@ export interface RelayRequest {
 export interface RelayResponse {
   status: number;
   body: unknown;
+  /** Send this HTML page instead of `body` as JSON (the consent page). */
+  html?: string;
+  headers?: Record<string, string>;
+}
+
+export interface InvokeContext {
+  /** Claims of the agent token, when auth is on. `claims.sub` is the user the agent acts for. */
+  claims?: TokenClaims;
 }
 
 export type InvokeOriginalHandler = (
   action: ActionDef,
   validatedInputs: Record<string, unknown>,
+  context: InvokeContext,
 ) => Promise<unknown> | unknown;
 
 interface AuthOk {
@@ -114,7 +123,7 @@ export async function handleAct(
 
   let captured: unknown;
   try {
-    captured = await invoke(action, validation.value);
+    captured = await invoke(action, validation.value, auth.claims ? { claims: auth.claims } : {});
   } catch (err) {
     if (err instanceof RelayUpstreamError) return upstreamFailure(actionId, err.status);
     return { status: 500, body: sanitiseError(err) };

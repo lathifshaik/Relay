@@ -36,6 +36,11 @@ const MAX_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 const HEADER_B64 = b64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
 
 export function issueToken(opts: IssueTokenOptions): string {
+  return mintToken(opts).token;
+}
+
+/** Like `issueToken`, but also returns the claims (e.g. the `jti` to revoke it by later). */
+export function mintToken(opts: IssueTokenOptions): { token: string; claims: TokenClaims } {
   if (!opts.signingKey) throw new Error("issueToken: signingKey is required");
   const ttl = clamp(opts.ttlSeconds ?? DEFAULT_TTL_SECONDS, 1, MAX_TTL_SECONDS);
   const now = Math.floor(Date.now() / 1000);
@@ -49,7 +54,7 @@ export function issueToken(opts: IssueTokenOptions): string {
   const payload = b64url(JSON.stringify(claims));
   const signed = `${HEADER_B64}.${payload}`;
   const sig = b64url(createHmac("sha256", opts.signingKey).update(signed).digest());
-  return `${signed}.${sig}`;
+  return { token: `${signed}.${sig}`, claims };
 }
 
 export type VerifyResult =

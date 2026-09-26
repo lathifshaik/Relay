@@ -159,6 +159,9 @@ importers:
       '@relay/eslint-config':
         specifier: workspace:*
         version: link:../eslint-config
+      '@relay/express':
+        specifier: workspace:*
+        version: link:../express
       '@types/express':
         specifier: ^4.17.21
         version: 4.17.25

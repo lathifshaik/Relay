@@ -1,4 +1,4 @@
-export type { RelayFastifyOptions } from "./plugin.js";
+export type { RelayAgent, RelayFastifyOptions } from "./plugin.js";
 export { relayPlugin } from "./plugin.js";
 
 export { FastifyRouteCollector } from "./route-scanner.js";

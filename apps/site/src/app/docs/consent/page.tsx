@@ -16,7 +16,32 @@ const ACCESS_MODE = `// Set per action in describe() / defineAction():
 
 relayAccess: "allowed"           // default — open to any scoped token
 relayAccess: "denied"            // never callable via /relay/act
-relayAccess: "consent-required"  // requires explicit user consent grant (Phase 3)`;
+relayAccess: "consent-required"  // reserved: not enforced differently from "allowed" yet`;
+
+const CONNECT = `app.use(
+  relay.middleware({
+    appName: "Notes",
+    signingKey: process.env.RELAY_SIGNING_KEY!,
+    // Turn on "connect an agent" and point signed-out people at your login.
+    connect: { loginUrl: "/login" },
+    // Who is signed in, using your own auth. Return their user id.
+    identify: (req) => req.session?.userId,
+  }),
+);
+
+// In a handler, an agent's calls carry the user it acts for:
+app.get("/notes", relay.describe((req, res) => {
+  const userId = req.relay?.subject ?? req.session.userId;
+  res.relayRespond({ notes: notesFor(userId) });
+}, { actionId: "list_notes", label: "List your notes" }));`;
+
+const FLOW = `POST /relay/connect        → { user_code: "BCDF-GHJK", verification_uri_complete, device_code }
+  (the person opens /relay/approve?code=BCDF-GHJK, signs in your usual way,
+   ticks what the agent may do, and approves)
+POST /relay/connect/token  → { access_token, token_type: "Bearer", scope, expires_in }
+
+GET  /relay/connections                → the signed-in person's connected agents
+POST /relay/connections/:id/revoke     → revoke one (JSON request)`;
 
 const SCOPED_TOKEN = `import { issueToken } from "@relay/core";
 
@@ -35,7 +60,7 @@ export default function ConsentDocs() {
       <DocHeader
         eyebrow="Reference"
         title="Consent model"
-        lead="Relay is built consent-first. Site owners control which routes exist in the manifest; end users will control which actions an agent can call on their behalf."
+        lead="Relay is built consent-first. Site owners control which routes exist in the manifest; end users control which actions an agent can call on their behalf."
       />
 
       <H2 id="tiers">Three tiers of access control</H2>
@@ -50,8 +75,9 @@ export default function ConsentDocs() {
           manifest, period.
         </LI>
         <LI>
-          <strong>User consent</strong> — controlled by the end user. Ships in Phase 3;
-          v0.1 enforces the first two tiers and a token scope check.
+          <strong>User consent</strong>: controlled by the end user. An agent asks to
+          connect, and the person approves exactly which actions it may call on the
+          site's own consent page. See <a href="#connect">Connecting an agent</a>.
         </LI>
       </UL>
 
@@ -98,6 +124,52 @@ export default function ConsentDocs() {
         Relay entirely (i.e. impersonate a human session).
       </Callout>
 
+      <H2 id="connect">Connecting an agent</H2>
+      <P>
+        Agents connect to a person&apos;s account the way a TV app signs in (OAuth device
+        authorization, RFC 8628). The agent gets a short code. The person approves it on
+        your site, after signing in your usual way, so passwords, 2FA and single sign-on
+        stay yours. The agent then receives a token limited to the actions the person
+        ticked, tied to their user id and revocable at any time.
+      </P>
+      <div className="mt-4">
+        <CodeBlock filename="server.ts" language="ts" code={CONNECT} />
+      </div>
+      <div className="mt-4">
+        <CodeBlock language="text" code={FLOW} />
+      </div>
+      <UL>
+        <LI>
+          The consent page shows the agent&apos;s name as unverified and warns people to
+          approve only codes they started themselves. It can&apos;t be framed by other
+          sites, and its form is CSRF-protected.
+        </LI>
+        <LI>
+          Denied and block-listed actions can never be granted, even if an agent asks
+          for them.
+        </LI>
+        <LI>
+          Tokens are handed over once, last 7 days by default (<InlineCode>tokenTtlSeconds</InlineCode>),
+          and revoking one takes effect immediately.
+        </LI>
+        <LI>
+          <InlineCode>/.well-known/relay.json</InlineCode> is served automatically, so
+          agents and <InlineCode>relay-bridge login</InlineCode> discover the flow on
+          their own.
+        </LI>
+        <LI>
+          Pending requests and grants live in memory by default. Pass a{" "}
+          <InlineCode>ConnectionStore</InlineCode> and a <InlineCode>TokenStore</InlineCode>{" "}
+          backed by your database for production and multiple instances.
+        </LI>
+        <LI>
+          Handlers see the user as <InlineCode>req.relay.subject</InlineCode> (Express),{" "}
+          <InlineCode>ctx.agent.subject</InlineCode> (Next),{" "}
+          <InlineCode>getRelayAgent(c)</InlineCode> (Hono) or{" "}
+          <InlineCode>request.relayAgent</InlineCode> (Fastify).
+        </LI>
+      </UL>
+
       <H2 id="local-llm">Local LLMs get no special treatment</H2>
       <P>
         Relay's access control runs entirely server-side. It does not care where the
@@ -106,16 +178,8 @@ export default function ConsentDocs() {
         same scope check, same block list.
       </P>
 
-      <H2 id="future">What's coming in Phase 3</H2>
+      <H2 id="future">What&apos;s coming</H2>
       <UL>
-        <LI>
-          User consent flow: agents requesting access trigger a consent screen showing
-          which actions, what data, expiry.
-        </LI>
-        <LI>
-          Scoped grants: user can approve <InlineCode>list_transactions</InlineCode> but
-          decline <InlineCode>export_pii</InlineCode>.
-        </LI>
         <LI>
           Audit log: immutable record of every consent grant + revoke.
         </LI>

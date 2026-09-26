@@ -41,6 +41,7 @@
     "typescript": "^5.6.0",
     "vitest": "^2.1.0",
     "express": "^4.19.2",
-    "@types/express": "^4.17.21"
+    "@types/express": "^4.17.21",
+    "@relay/express": "workspace:*"
   }
 }

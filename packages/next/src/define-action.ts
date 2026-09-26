@@ -9,6 +9,8 @@ export type RouteParams = Record<string, string | string[] | undefined>;
 export interface ActionContext {
   request: NextRequest;
   params: RouteParams;
+  /** Set when an agent connected through /relay/connect calls the action: the user it acts for. */
+  agent?: { subject: string; scope: readonly string[] };
 }
 
 export interface ActionDefinition<TInputs = Record<string, unknown>, TReturns = unknown> {
